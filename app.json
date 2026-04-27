@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Cupid",
+    "slug": "cupid",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.lucas.cupid"
+    },
+    "android": {
+      "package": "com.lucas.cupid"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
