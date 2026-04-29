@@ -1,4 +1,4 @@
-# spark — React Native + Firebase
+# Cupid — React Native + Firebase
 
 ## Stack
 - **Frontend**: React Native (Expo ~54)
