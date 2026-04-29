@@ -105,7 +105,7 @@ reports/{reportId}
 
 ---
 
-## Firestore Security Rules (paste into Firebase console)
+## Firestore Security Rules
 
 ```javascript
 rules_version = '2';
@@ -169,18 +169,8 @@ service firebase.storage {
 
 ---
 
-## Where to Connect Firebase (marked with TODO in each screen)
 
-| Screen | Firebase call |
-|--------|--------------|
-| `RegisterScreen` | `createUserWithEmailAndPassword` + `setDoc` to users collection |
-| `LoginScreen` | `signInWithEmailAndPassword` or `signInWithPopup` (Google) |
-| `ProfileSetupScreen` | `updateDoc` users/{uid} + `uploadBytes` to Storage |
-| `DiscoverScreen` | `getDocs` users collection (exclude seen) |
-| `DiscoverScreen` swipe | `setDoc` swipes/{id} + check mutual → create match |
-| `MatchesScreen` | `onSnapshot` matches where uid in users |
-| `ChatScreen` | `onSnapshot` messages subcollection + `addDoc` to send |
-| `ProfileScreen` | `onSnapshot` users/{uid} for own profile |
+
 
 ---
 
