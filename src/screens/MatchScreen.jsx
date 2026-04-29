@@ -5,7 +5,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   Animated, Dimensions,
 } from 'react-native';
-import { colors, radius } from '../theme';
+import { radius, colors } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 
 const { width: W } = Dimensions.get('window');
 
@@ -27,6 +28,8 @@ const CONFETTI = [
 ];
 
 export default function MatchScreen({ route, navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   // In production: const { match, otherUser } = route.params;
   const otherUser = { name: 'Amara', age: 25, emoji: '🌸', bg: '#FFE8D6' };
   const myEmoji = '😊';
@@ -81,7 +84,7 @@ export default function MatchScreen({ route, navigation }) {
         <View style={s.actions}>
           <TouchableOpacity
             style={s.btnMessage}
-            onPress={() => navigation?.navigate('Chat', { matchId: '123', otherUser })}
+            onPress={() => navigation?.navigate('FriendChat', { matchId: matchData?.id || '123', otherUser })}
             activeOpacity={0.88}
           >
             <Text style={s.btnMessageText}>Send a message 💬</Text>
@@ -108,7 +111,7 @@ export default function MatchScreen({ route, navigation }) {
 
 const AVG = 90;
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#0F0D0D',

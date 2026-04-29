@@ -5,13 +5,16 @@ import {
   Dimensions, Image, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 
 const { width: W } = Dimensions.get('window');
 const PHOTO_SIZE = (W - 48 - 8) / 3;
 
 export default function UserProfileScreen({ navigation, route }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const { userId } = route.params;
 
   const [user, setUser]         = useState(null);
@@ -93,7 +96,7 @@ export default function UserProfileScreen({ navigation, route }) {
           <Ionicons name="chevron-back" size={22} color={colors.graphite} />
         </TouchableOpacity>
         <Text style={s.title}>{user.name}</Text>
-        <View style={{ width: 38 }} /> {/* spacer */}
+        <View style={{ width: 38 }} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -109,7 +112,7 @@ export default function UserProfileScreen({ navigation, route }) {
           <View style={s.cardInfo}>
             <View style={s.nameRow}>
               <Text style={s.name}>{user.name}</Text>
-              {user.username && <Text style={s.username}>@{user.username}</Text>}
+              {!!user.username && <Text style={s.username}>@{user.username}</Text>}
               <View style={s.verifiedBadge}>
                 <Ionicons name="checkmark" size={11} color={colors.white} />
               </View>
@@ -224,7 +227,7 @@ export default function UserProfileScreen({ navigation, route }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.snow },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

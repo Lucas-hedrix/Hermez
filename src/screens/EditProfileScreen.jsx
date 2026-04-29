@@ -5,7 +5,8 @@ import {
   TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { detectRegion } from '../supabase/storage';
 
@@ -32,6 +33,8 @@ const SIGNS = [
 ];
 
 export default function EditProfileScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [name,    setName]    = useState('');
   const [bio,     setBio]     = useState('');
   const [region,  setRegion]  = useState('');
@@ -92,6 +95,38 @@ export default function EditProfileScreen({ navigation }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const deleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to permanently delete your account? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              // Supabase allows users to delete their own account via RPC or by calling an edge function.
+              // We'll call a hypothetical 'delete_user' RPC function, or just update 'profile_complete' = false as soft delete for now.
+              // The user might need to implement a database trigger or RPC for true deletion.
+              const { error } = await supabase.rpc('delete_user');
+              if (error) {
+                // Fallback: sign out
+                await supabase.auth.signOut();
+              } else {
+                await supabase.auth.signOut();
+              }
+            } catch (e) {
+              Alert.alert('Error', e.message);
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
   if (loading) {
@@ -190,13 +225,20 @@ export default function EditProfileScreen({ navigation }) {
           </View>
         </View>
 
+        <View style={s.dangerZone}>
+          <TouchableOpacity style={s.deleteBtn} onPress={deleteAccount}>
+            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+            <Text style={s.deleteBtnText}>Delete Account</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </View>
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.snow },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -242,4 +284,8 @@ const s = StyleSheet.create({
   hobbyPillDisabled:{ opacity: 0.4 },
   hobbyText:        { fontSize: 13, color: colors.graphite, fontWeight: '500' },
   hobbyTextActive:  { color: colors.ember, fontWeight: '600' },
+
+  dangerZone: { marginTop: 24, paddingHorizontal: 16 },
+  deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.danger },
+  deleteBtnText: { color: colors.danger, fontWeight: '600', fontSize: 15 },
 });

@@ -5,7 +5,8 @@ import {
   ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 
 function timeAgo(iso) {
@@ -18,6 +19,8 @@ function timeAgo(iso) {
 }
 
 function NewMatchBubble({ item, onPress }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   return (
     <TouchableOpacity style={s.newMatchItem} onPress={() => onPress(item)} activeOpacity={0.8}>
       <View style={s.newMatchRing}>
@@ -34,6 +37,8 @@ function NewMatchBubble({ item, onPress }) {
 }
 
 function ConversationRow({ item, onPress }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   return (
     <TouchableOpacity style={s.convRow} onPress={() => onPress(item)} activeOpacity={0.75}>
       <View style={s.convAvWrap}>
@@ -65,6 +70,8 @@ function ConversationRow({ item, onPress }) {
 }
 
 export default function MatchesScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [activeTab, setActiveTab] = useState('matches');
   const [matches, setMatches] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -81,10 +88,19 @@ export default function MatchesScreen({ navigation }) {
 
     if (!friendRows || friendRows.length === 0) { setFriends([]); return; }
 
-    const otherIds = friendRows.map(f => f.requester_id === uid ? f.recipient_id : f.requester_id);
+    const uniqueFriendsMap = {};
+    for (const f of friendRows) {
+      const otherId = f.requester_id === uid ? f.recipient_id : f.requester_id;
+      if (!uniqueFriendsMap[otherId]) {
+        uniqueFriendsMap[otherId] = f;
+      }
+    }
+    const uniqueFriends = Object.values(uniqueFriendsMap);
+
+    const otherIds = uniqueFriends.map(f => f.requester_id === uid ? f.recipient_id : f.requester_id);
     const { data: profiles } = await supabase.from('users').select('id, name, photo_urls').in('id', otherIds);
 
-    const enriched = await Promise.all(friendRows.map(async (friendship) => {
+    const enriched = await Promise.all(uniqueFriends.map(async (friendship) => {
       const otherId   = friendship.requester_id === uid ? friendship.recipient_id : friendship.requester_id;
       const otherUser = profiles?.find(p => p.id === otherId) ?? { id: otherId, name: 'Friend' };
       const { data: msgs } = await supabase
@@ -103,18 +119,24 @@ export default function MatchesScreen({ navigation }) {
       .or(`user1_id.eq.${uid},user2_id.eq.${uid}`)
       .order('created_at', { ascending: false });
 
-    if (!matchRows || matchRows.length === 0) { setLoading(false); return; }
+    if (!matchRows || matchRows.length === 0) { setMatches([]); setLoading(false); return; }
 
-    const otherIds = matchRows.map(m => m.user1_id === uid ? m.user2_id : m.user1_id);
+    const uniqueMatchesMap = {};
+    for (const m of matchRows) {
+      const otherId = m.user1_id === uid ? m.user2_id : m.user1_id;
+      if (!uniqueMatchesMap[otherId]) {
+        uniqueMatchesMap[otherId] = m;
+      }
+    }
+    const uniqueMatches = Object.values(uniqueMatchesMap);
+
+    const otherIds = uniqueMatches.map(m => m.user1_id === uid ? m.user2_id : m.user1_id);
     const { data: profiles } = await supabase.from('users').select('id, name, photo_urls').in('id', otherIds);
 
-    const enriched = await Promise.all(matchRows.map(async (match) => {
+    const enriched = await Promise.all(uniqueMatches.map(async (match) => {
       const otherId   = match.user1_id === uid ? match.user2_id : match.user1_id;
       const otherUser = profiles?.find(p => p.id === otherId) ?? { id: otherId, name: 'User' };
-      const { data: msgs } = await supabase
-        .from('messages').select('text, created_at, sender_id')
-        .eq('match_id', match.id).order('created_at', { ascending: false }).limit(1);
-      return { ...match, otherUser, lastMessage: msgs?.[0] ?? null };
+      return { ...match, otherUser };
     }));
 
     setMatches(enriched);
@@ -142,10 +164,7 @@ export default function MatchesScreen({ navigation }) {
     return () => { if (channel) supabase.removeChannel(channel); };
   }, []);
 
-  const openChat = (match) => navigation?.navigate('Chat', { matchId: match.id, otherUser: match.otherUser });
-
-  const newMatches    = matches.filter(m => !m.lastMessage);
-  const conversations = matches.filter(m =>  m.lastMessage);
+  const openProfile = (match) => navigation?.navigate('UserProfile', { userId: match.otherUser.id });
 
   return (
     <View style={s.root}>
@@ -183,55 +202,26 @@ export default function MatchesScreen({ navigation }) {
           </View>
         ) : (
           <>
-            {newMatches.length > 0 && (
-              <>
-                <View style={s.sectionHeader}>
-                  <Text style={s.sectionTitle}>New matches</Text>
-                  <View style={s.newBadge}><Text style={s.newBadgeText}>{newMatches.length}</Text></View>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.newMatchesRow}>
-                  {newMatches.map(match => (
-                    <NewMatchBubble
-                      key={match.id}
-                      item={{
-                        id: match.id,
-                        name: match.otherUser?.name ?? 'Match',
-                        photoUrl: match.otherUser?.photo_urls?.[0] ?? null,
-                        bg: '#FFE8D6',
-                        time: timeAgo(match.created_at),
-                      }}
-                      onPress={() => openChat(match)}
-                    />
-                  ))}
-                </ScrollView>
-                <View style={s.divider} />
-              </>
-            )}
-
-            {conversations.length > 0 && (
-              <>
-                <View style={s.sectionHeader}>
-                  <Text style={s.sectionTitle}>Messages</Text>
-                </View>
-                {conversations.map(match => (
-                  <ConversationRow
-                    key={match.id}
-                    item={{
-                      id: match.id,
-                      name: match.otherUser?.name ?? 'Match',
-                      photoUrl: match.otherUser?.photo_urls?.[0] ?? null,
-                      bg: '#FFE8D6',
-                      lastMsg: match.lastMessage?.sender_id === myId
-                        ? `You: ${match.lastMessage.text}`
-                        : match.lastMessage?.text ?? '',
-                      time: timeAgo(match.lastMessage?.created_at),
-                      unread: 0, online: false,
-                    }}
-                    onPress={() => openChat(match)}
-                  />
-                ))}
-              </>
-            )}
+            <View style={s.sectionHeader}>
+              <Text style={s.sectionTitle}>Your Matches</Text>
+              <View style={s.newBadge}><Text style={s.newBadgeText}>{matches.length}</Text></View>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.newMatchesRow}>
+              {matches.map(match => (
+                <NewMatchBubble
+                  key={match.id}
+                  item={{
+                    id: match.id,
+                    name: match.otherUser?.name ?? 'Match',
+                    photoUrl: match.otherUser?.photo_urls?.[0] ?? null,
+                    bg: '#FFE8D6',
+                    time: timeAgo(match.created_at),
+                  }}
+                  onPress={() => openProfile(match)}
+                />
+              ))}
+            </ScrollView>
+            <View style={s.divider} />
           </>
         )) : (
           friends.length === 0 ? (
@@ -299,7 +289,7 @@ export default function MatchesScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.white },
 
   header: {

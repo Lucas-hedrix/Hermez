@@ -6,7 +6,8 @@ import {
   Platform, Dimensions, Alert, RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius, colors } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { pickAndUploadPhoto } from '../supabase/storage';
 
@@ -20,7 +21,8 @@ function timeAgo(dateStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function PostCard({ post, myUid, onOpenComments, onOpenShare, onOpenProfile }) {
+function PostCard({ post, myUid, onOpenComments, onOpenShare, onOpenProfile }) {  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [liked, setLiked]         = useState(false);
   const [likeCount, setLikeCount] = useState(Math.floor(Math.random() * 20));
   const isOwn = post.user_id === myUid;
@@ -108,7 +110,8 @@ const pc = StyleSheet.create({
 
 // ── Create Post Modal ────────────────────────────────────────────────────────
 
-function CreatePostModal({ visible, onClose, onCreated, myUid }) {
+function CreatePostModal({ visible, onClose, onCreated, myUid }) {  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [caption,   setCaption]   = useState('');
   const [imageUri,  setImageUri]  = useState(null);
   const [visibility, setVisibility] = useState('public');
@@ -237,7 +240,8 @@ const cm = StyleSheet.create({
 });
 
 // ── Comment Modal ────────────────────────────────────────────────────────────
-function CommentModal({ visible, onClose, post, myUid }) {
+function CommentModal({ visible, onClose, post, myUid }) {  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [comments, setComments] = useState([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -341,7 +345,8 @@ function CommentModal({ visible, onClose, post, myUid }) {
 }
 
 // ── Share Modal ────────────────────────────────────────────────────────────
-function ShareModal({ visible, onClose, post, myUid }) {
+function ShareModal({ visible, onClose, post, myUid }) {  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [friends, setFriends] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sentTo, setSentTo] = useState({});
@@ -460,6 +465,8 @@ const modals = StyleSheet.create({
 // ── Main PostsScreen ─────────────────────────────────────────────────────────
 
 export default function PostsScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [posts,      setPosts]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -597,7 +604,7 @@ export default function PostsScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root:   { flex: 1, backgroundColor: colors.snow },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

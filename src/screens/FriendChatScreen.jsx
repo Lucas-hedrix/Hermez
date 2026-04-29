@@ -7,7 +7,8 @@ import {
   KeyboardAvoidingView, Platform, Dimensions, Image, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 
 const { width: W } = Dimensions.get('window');
@@ -18,7 +19,7 @@ function formatTime(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function Bubble({ item, myId, onPressShare }) {
+function Bubble({ item, myId, onPressShare, s, colors }) {
   const isMe = item.sender_id === myId;
   
   if (item.type === 'post_share') {
@@ -37,7 +38,7 @@ function Bubble({ item, myId, onPressShare }) {
         </TouchableOpacity>
         <View style={[s.metaRow, isMe && s.metaRowMe]}>
           <Text style={s.bubbleTime}>{formatTime(item.created_at)}</Text>
-          {isMe && <Ionicons name="checkmark-done" size={13} color={colors.ember} />}
+          {isMe && <Ionicons name={item.is_read ? "checkmark-done" : "checkmark"} size={13} color={colors.ember} />}
         </View>
       </View>
     );
@@ -50,14 +51,21 @@ function Bubble({ item, myId, onPressShare }) {
       </View>
       <View style={[s.metaRow, isMe && s.metaRowMe]}>
         <Text style={s.bubbleTime}>{formatTime(item.created_at)}</Text>
-        {isMe && <Ionicons name="checkmark-done" size={13} color={colors.ember} />}
+        {isMe && <Ionicons name={item.is_read ? "checkmark-done" : "checkmark"} size={13} color={colors.ember} />}
       </View>
     </View>
   );
 }
 
 export default function FriendChatScreen({ route, navigation }) {
-  const { friendship: initialFriendship, otherUser, myUid } = route?.params ?? {};
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
+  const { friendship: initialFriendship, matchId, otherUser, myUid } = route?.params ?? {};
+
+  const isMatchMode = !!matchId;
+  const chatId = isMatchMode ? matchId : initialFriendship?.id;
+  const msgsTable = isMatchMode ? 'messages' : 'friend_messages';
+  const chatFk = isMatchMode ? 'match_id' : 'friendship_id';
 
   const [messages,    setMessages]    = useState([]);
   const [text,        setText]        = useState('');
@@ -66,9 +74,9 @@ export default function FriendChatScreen({ route, navigation }) {
   const [myMsgCount,  setMyMsgCount]  = useState(0);
   const listRef = useRef(null);
 
-  const iAmRequester = friendship?.requester_id === myUid;
-  const isPending    = friendship?.status === 'pending';
-  const isLimited    = iAmRequester && isPending;
+  const iAmRequester = !isMatchMode && friendship?.requester_id === myUid;
+  const isPending    = !isMatchMode && friendship?.status === 'pending';
+  const isLimited    = !isMatchMode && iAmRequester && isPending;
   const msgLimitHit  = isLimited && myMsgCount >= MAX_PENDING_MSGS;
 
   const scrollToBottom = useCallback(() => {
@@ -76,15 +84,15 @@ export default function FriendChatScreen({ route, navigation }) {
   }, []);
 
   useEffect(() => {
-    if (!friendship?.id) return;
+    if (!chatId) return;
     let channel;
 
     (async () => {
       // Load messages
       const { data } = await supabase
-        .from('friend_messages')
+        .from(msgsTable)
         .select('*')
-        .eq('friendship_id', friendship.id)
+        .eq(chatFk, chatId)
         .order('created_at', { ascending: true });
 
       const msgs = data ?? [];
@@ -93,16 +101,29 @@ export default function FriendChatScreen({ route, navigation }) {
       setLoading(false);
       scrollToBottom();
 
+      // Mark unread messages from them as read
+      const unreadIds = msgs.filter(m => m.sender_id !== myUid && !m.is_read).map(m => m.id);
+      if (unreadIds.length > 0) {
+        await supabase.from(msgsTable).update({ is_read: true }).in('id', unreadIds);
+      }
+
       // Realtime
-      channel = supabase.channel(`fchat:${friendship.id}`)
+      channel = supabase.channel(`fchat:${chatId}`)
         .on('postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'friend_messages', filter: `friendship_id=eq.${friendship.id}` },
+          { event: 'INSERT', schema: 'public', table: msgsTable, filter: `${chatFk}=eq.${chatId}` },
           async (payload) => {
             const msg = payload.new;
             setMessages(prev => {
-              if (prev.find(m => m.id === msg.id)) return prev;
+              if (prev.find(m => m.id === msg.id)) {
+                return prev.map(m => m.id === msg.id ? { ...m, ...msg } : m);
+              }
               return [...prev, msg];
             });
+
+            // Mark as read immediately if it's from them
+            if (msg.sender_id !== myUid && !msg.is_read) {
+              await supabase.from(msgsTable).update({ is_read: true }).eq('id', msg.id);
+            }
             // If recipient (not requester) just replied → auto-accept
             if (msg.sender_id !== myUid && isPending && !iAmRequester) {
               // I am recipient and other person (requester) already in chat — wait for my reply
@@ -118,11 +139,16 @@ export default function FriendChatScreen({ route, navigation }) {
             }
             scrollToBottom();
           }
+        ).on('postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: msgsTable, filter: `${chatFk}=eq.${chatId}` },
+          (payload) => {
+            setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m));
+          }
         ).subscribe();
     })();
 
     return () => { if (channel) supabase.removeChannel(channel); };
-  }, [friendship?.id]);
+  }, [chatId]);
 
   const autoAccept = async () => {
     if (friendship.status === 'accepted') return;
@@ -132,7 +158,7 @@ export default function FriendChatScreen({ route, navigation }) {
 
   const send = async () => {
     const trimmed = text.trim();
-    if (!trimmed || !myUid || !friendship?.id) return;
+    if (!trimmed || !myUid || !chatId) return;
     if (msgLimitHit) {
       Alert.alert('Message limit reached', `You can send up to ${MAX_PENDING_MSGS} messages until ${otherUser?.name ?? 'they'} accepts your request.`);
       return;
@@ -141,7 +167,7 @@ export default function FriendChatScreen({ route, navigation }) {
     const tempId = 'temp-' + Date.now();
     const tempMsg = {
       id: tempId,
-      friendship_id: friendship.id,
+      [chatFk]: chatId,
       sender_id: myUid,
       text: trimmed,
       created_at: new Date().toISOString(),
@@ -158,8 +184,8 @@ export default function FriendChatScreen({ route, navigation }) {
       autoAccept();
     }
 
-    const { data, error } = await supabase.from('friend_messages').insert({
-      friendship_id: friendship.id,
+    const { data, error } = await supabase.from(msgsTable).insert({
+      [chatFk]: chatId,
       sender_id: myUid,
       text: trimmed,
     }).select().single();
@@ -214,13 +240,30 @@ export default function FriendChatScreen({ route, navigation }) {
               ? <Image source={{ uri: photoUrl }} style={StyleSheet.absoluteFillObject} borderRadius={21} />
               : <Ionicons name="person" size={20} color={colors.ash} />}
           </View>
-          <View>
+          <View style={s.headerTextCol}>
             <Text style={s.headerName}>{name}</Text>
-            <Text style={s.headerSub}>
-              {friendship?.status === 'accepted' ? 'Friends' : 'Pending request'}
-            </Text>
+            {isMatchMode ? (
+              <View style={s.onlineRow}>
+                <View style={s.onlineDot} />
+                <Text style={s.headerOnline}>Active now</Text>
+              </View>
+            ) : (
+              <Text style={s.headerSub}>
+                {friendship?.status === 'accepted' ? 'Friends' : 'Pending request'}
+              </Text>
+            )}
           </View>
         </TouchableOpacity>
+        {isMatchMode && (
+          <View style={s.headerActions}>
+            <TouchableOpacity style={s.headerActionBtn}>
+              <Ionicons name="call-outline" size={20} color={colors.graphite} />
+            </TouchableOpacity>
+            <TouchableOpacity style={s.headerActionBtn}>
+              <Ionicons name="ellipsis-vertical" size={20} color={colors.graphite} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Status banner */}
@@ -255,7 +298,7 @@ export default function FriendChatScreen({ route, navigation }) {
           ref={listRef}
           data={messages}
           keyExtractor={item => item.id}
-          renderItem={({ item }) => <Bubble item={item} myId={myUid} onPressShare={handlePressShare} />}
+          renderItem={({ item }) => <Bubble item={item} myId={myUid} onPressShare={handlePressShare} s={s} colors={colors} />}
           contentContainerStyle={s.msgList}
           onContentSizeChange={scrollToBottom}
           showsVerticalScrollIndicator={false}
@@ -288,6 +331,11 @@ export default function FriendChatScreen({ route, navigation }) {
       {/* Input */}
       {!msgLimitHit && (
         <View style={s.inputBar}>
+          {isMatchMode && (
+            <TouchableOpacity style={s.attachBtn}>
+              <Ionicons name="image-outline" size={22} color={colors.stone} />
+            </TouchableOpacity>
+          )}
           <TextInput
             style={s.input}
             value={text}
@@ -310,7 +358,7 @@ export default function FriendChatScreen({ route, navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.white },
 
   header: {
@@ -321,8 +369,14 @@ const s = StyleSheet.create({
   backBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: colors.fog, alignItems: 'center', justifyContent: 'center' },
   headerProfile: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerAv:  { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  headerTextCol: { flex: 1 },
   headerName:{ fontSize: 15, fontWeight: '700', color: colors.ink },
   headerSub: { fontSize: 12, color: colors.ash, marginTop: 1 },
+  onlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  onlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
+  headerOnline: { fontSize: 12, color: colors.success, fontWeight: '500' },
+  headerActions: { flexDirection: 'row', gap: 2 },
+  headerActionBtn:{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 
   banner: {
     flexDirection: 'row', alignItems: 'center', gap: 7,
@@ -362,6 +416,11 @@ const s = StyleSheet.create({
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     padding: 10, paddingBottom: 28, borderTopWidth: 1, borderColor: colors.fog,
+  },
+  attachBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: colors.snow, borderWidth: 1, borderColor: colors.fog,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 2,
   },
   input: {
     flex: 1, backgroundColor: colors.snow, borderRadius: 22,

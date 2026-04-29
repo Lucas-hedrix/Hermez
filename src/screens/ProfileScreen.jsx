@@ -6,7 +6,8 @@ import {
   Modal, RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { pickAndUploadPhoto, deletePhoto } from '../supabase/storage';
 
@@ -14,6 +15,8 @@ const { width: W } = Dimensions.get('window');
 const PHOTO_SIZE = (W - 48 - 8) / 3;
 
 export default function ProfileScreen({ navigation }) {
+  const { colors, shadow, isDark, toggleTheme } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [discoverable, setDiscoverable]   = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [hideLastSeen,  setHideLastSeen]  = useState(false);
@@ -452,6 +455,20 @@ export default function ProfileScreen({ navigation }) {
               trackColor={{ false: colors.fog, true: colors.ember }} thumbColor={colors.white} />
           </View>
 
+          <View style={s.settingRow}>
+            <View style={s.settingRowLeft}>
+              <View style={s.settingIconWrap}>
+                <Ionicons name="moon-outline" size={18} color={colors.ember} />
+              </View>
+              <View>
+                <Text style={s.settingLabel}>Night Mode</Text>
+                <Text style={s.settingSubLabel}>Toggle dark theme</Text>
+              </View>
+            </View>
+            <Switch value={isDark} onValueChange={toggleTheme}
+              trackColor={{ false: colors.fog, true: colors.ember }} thumbColor={colors.white} />
+          </View>
+
           {PREF_ROWS.map(item => (
             <TouchableOpacity key={item.label} style={s.settingRowBtn}>
               <View style={s.settingRowLeft}>
@@ -479,7 +496,7 @@ export default function ProfileScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.snow },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -494,6 +511,8 @@ const s = StyleSheet.create({
   profileCard: {
     marginHorizontal: 16, borderRadius: radius.xl, overflow: 'hidden',
     backgroundColor: colors.white, marginBottom: 16,
+    borderWidth: isDark ? 1 : 0, borderColor: colors.fog,
+    ...(isDark ? shadow.glow : shadow.card),
   },
   mainPhoto: {
     height: 260, alignItems: 'center', justifyContent: 'center', position: 'relative',

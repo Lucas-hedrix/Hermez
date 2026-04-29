@@ -5,7 +5,8 @@ import {
   Image, TextInput, ActivityIndicator, Alert, ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius, colors } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 
 // ── Friendship state helper ───────────────────────────────────────────────────
@@ -17,7 +18,8 @@ function getFriendState(friendships, userId, myUid) {
 }
 
 // ── User card ─────────────────────────────────────────────────────────────────
-function UserCard({ user, friendState, onAdd, onAccept, onCancel, onOpenChat }) {
+function UserCard({ user, friendState, onAdd, onAccept, onCancel, onOpenChat }) {  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   return (
     <View style={c.card}>
       <TouchableOpacity style={c.avatarWrap} onPress={() => onOpenChat(user)} activeOpacity={0.8}>
@@ -101,7 +103,8 @@ const c = StyleSheet.create({
 });
 
 // ── Pending request banner ────────────────────────────────────────────────────
-function PendingBanner({ requests, usersMap, onAccept }) {
+function PendingBanner({ requests, usersMap, onAccept }) {  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   if (requests.length === 0) return null;
   return (
     <View style={pb.wrap}>
@@ -151,6 +154,8 @@ const pb = StyleSheet.create({
 
 // ── Main SearchScreen ─────────────────────────────────────────────────────────
 export default function SearchScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [query,        setQuery]        = useState('');
   const [results,      setResults]      = useState([]);
   const [recommended,  setRecommended]  = useState([]);
@@ -259,7 +264,11 @@ export default function SearchScreen({ navigation }) {
 
   // ── Friend actions ───────────────────────────────────────────────────────
   const sendRequest = async (recipientId) => {
+    if (friendships[recipientId]) return; // Prevent duplicate requests
     try {
+      // Optimistic update
+      setFriendships(prev => ({ ...prev, [recipientId]: { requester_id: myUid, recipient_id: recipientId, status: 'pending' } }));
+      
       const { data, error } = await supabase.from('friendships').insert({
         requester_id: myUid,
         recipient_id: recipientId,
@@ -269,6 +278,7 @@ export default function SearchScreen({ navigation }) {
       setFriendships(prev => ({ ...prev, [recipientId]: data }));
     } catch (e) {
       Alert.alert('Error', e.message);
+      setFriendships(prev => { const n = { ...prev }; delete n[recipientId]; return n; }); // Revert
     }
   };
 
@@ -281,13 +291,18 @@ export default function SearchScreen({ navigation }) {
         {
           text: 'Cancel request', style: 'destructive',
           onPress: async () => {
+            const f = friendships[recipientId];
+            if (!f) return;
+            // Optimistic removal
+            setFriendships(prev => { const n = { ...prev }; delete n[recipientId]; return n; });
             try {
-              const f = friendships[recipientId];
-              if (!f?.id) return;
-              await supabase.from('friendships').delete().eq('id', f.id);
-              setFriendships(prev => { const n = { ...prev }; delete n[recipientId]; return n; });
+              if (f.id) {
+                await supabase.from('friendships').delete().eq('id', f.id);
+              }
             } catch (e) {
               Alert.alert('Error', e.message);
+              // Revert
+              setFriendships(prev => ({ ...prev, [recipientId]: f }));
             }
           },
         },
@@ -397,7 +412,7 @@ export default function SearchScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root:   { flex: 1, backgroundColor: colors.snow },
   header: { paddingHorizontal: 22, paddingTop: 56, paddingBottom: 12 },
   title:  { fontSize: 32, fontWeight: '800', color: colors.ink, letterSpacing: -0.8 },

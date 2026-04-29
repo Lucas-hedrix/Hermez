@@ -5,11 +5,14 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { InputField, PrimaryButton } from '../components/UI';
 import { supabase } from '../supabase/client';
 
 export default function LoginScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [identifier, setIdentifier] = useState(''); // email OR username
   const [password,   setPassword]   = useState('');
   const [loading,    setLoading]    = useState(false);
@@ -109,7 +112,7 @@ export default function LoginScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root:   { flex: 1, backgroundColor: colors.white },
   scroll: { flexGrow: 1, padding: 28, paddingTop: 56 },
   backBtn:{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: colors.fog, alignItems: 'center', justifyContent: 'center', marginBottom: 32, alignSelf: 'flex-start' },

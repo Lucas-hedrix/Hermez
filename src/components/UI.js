@@ -1,8 +1,10 @@
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
-import { colors, radius, shadow, fonts } from '../theme';
+import { radius, fonts } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 
 // ─── PrimaryButton ─────────────────────────────────────────────────────────
-export function PrimaryButton({ label, onPress, loading, style }) {
+export function PrimaryButton({ label, onPress, loading, style }) {  const { colors, shadow, isDark } = useTheme();
+  const styles = getStyles(colors, shadow, isDark);
   return (
     <TouchableOpacity style={[styles.primary, style]} onPress={onPress} activeOpacity={0.85} disabled={loading}>
       {loading
@@ -13,7 +15,8 @@ export function PrimaryButton({ label, onPress, loading, style }) {
 }
 
 // ─── GhostButton ───────────────────────────────────────────────────────────
-export function GhostButton({ label, onPress, style }) {
+export function GhostButton({ label, onPress, style }) {  const { colors, shadow, isDark } = useTheme();
+  const styles = getStyles(colors, shadow, isDark);
   return (
     <TouchableOpacity style={[styles.ghost, style]} onPress={onPress} activeOpacity={0.7}>
       <Text style={styles.ghostText}>{label}</Text>
@@ -23,7 +26,8 @@ export function GhostButton({ label, onPress, style }) {
 
 // ─── InputField ────────────────────────────────────────────────────────────
 import { TextInput } from 'react-native';
-export function InputField({ label, style, inputStyle, ...props }) {
+export function InputField({ label, style, inputStyle, ...props }) {  const { colors, shadow, isDark } = useTheme();
+  const styles = getStyles(colors, shadow, isDark);
   return (
     <View style={[styles.fieldWrap, style]}>
       {label && <Text style={styles.fieldLabel}>{label}</Text>}
@@ -37,7 +41,8 @@ export function InputField({ label, style, inputStyle, ...props }) {
 }
 
 // ─── SelectPill ────────────────────────────────────────────────────────────
-export function SelectPill({ label, selected, onPress }) {
+export function SelectPill({ label, selected, onPress }) {  const { colors, shadow, isDark } = useTheme();
+  const styles = getStyles(colors, shadow, isDark);
   return (
     <TouchableOpacity
       style={[styles.pill, selected && styles.pillActive]}
@@ -50,7 +55,8 @@ export function SelectPill({ label, selected, onPress }) {
 }
 
 // ─── Avatar ────────────────────────────────────────────────────────────────
-export function Avatar({ uri, name, size = 48, style }) {
+export function Avatar({ uri, name, size = 48, style }) {  const { colors, shadow, isDark } = useTheme();
+  const styles = getStyles(colors, shadow, isDark);
   if (uri) {
     return <Image source={{ uri }} style={[{ width: size, height: size, borderRadius: size / 2 }, style]} />;
   }
@@ -62,7 +68,8 @@ export function Avatar({ uri, name, size = 48, style }) {
 }
 
 // ─── ScreenHeader ──────────────────────────────────────────────────────────
-export function ScreenHeader({ title, onBack, rightEl }) {
+export function ScreenHeader({ title, onBack, rightEl }) {  const { colors, shadow, isDark } = useTheme();
+  const styles = getStyles(colors, shadow, isDark);
   return (
     <View style={styles.header}>
       {onBack
@@ -76,7 +83,7 @@ export function ScreenHeader({ title, onBack, rightEl }) {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   // Buttons
   primary: {
     backgroundColor: colors.ember,

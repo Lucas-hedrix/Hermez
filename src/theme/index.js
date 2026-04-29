@@ -1,4 +1,4 @@
-export const colors = {
+export const lightColors = {
   // Brand
   ember: '#E8472A',
   emberLight: '#FFF0ED',
@@ -19,6 +19,31 @@ export const colors = {
   success: '#27AE60',
   danger: '#E74C3C',
 };
+
+export const darkColors = {
+  // Brand
+  ember: '#E8472A',
+  emberLight: 'rgba(232, 71, 42, 0.15)',
+  emberDark: '#B33320',
+  gold: '#F2A83B',
+  goldLight: 'rgba(242, 168, 59, 0.15)',
+
+  // Neutrals (Inverted for soft black dark mode)
+  ink: '#FFFFFF',
+  graphite: '#E0E0E0',
+  stone: '#A0A0A0',
+  ash: '#6B6565',
+  fog: '#2C2A2A',
+  snow: '#121212', // Soft black background
+  white: '#1E1E1E', // Card backgrounds
+
+  // Semantic
+  success: '#27AE60',
+  danger: '#E74C3C',
+};
+
+// Fallback for non-refactored components
+export const colors = lightColors;
 
 export const fonts = {
   display: 'serif',       // swap for 'Cormorant_Garamond' with expo-google-fonts

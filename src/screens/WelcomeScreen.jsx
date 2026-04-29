@@ -1,30 +1,20 @@
 // screens/WelcomeScreen.jsx
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
-import { colors, radius, fonts } from '../theme';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity, Image } from 'react-native';
+import { radius, fonts } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 
 const { width: W, height: H } = Dimensions.get('window');
 
-// Decorative avatar cards shown on the welcome screen
-const PREVIEW_CARDS = [
-  { emoji: '😊', bg: '#FFE8D6', rotate: '-12deg', top: H * 0.12, left: W * 0.06 },
-  { emoji: '😍', bg: '#D6EAF8', rotate: '8deg', top: H * 0.08, left: W * 0.38 },
-  { emoji: '🥰', bg: '#D5F5E3', rotate: '-5deg', top: H * 0.20, left: W * 0.62 },
-  { emoji: '😎', bg: '#F9EBEA', rotate: '14deg', top: H * 0.30, left: W * 0.15 },
-  { emoji: '🤩', bg: '#FEF9E7', rotate: '-9deg', top: H * 0.26, left: W * 0.52 },
-];
-
 export default function WelcomeScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   return (
     <View style={s.root}>
-      {/* Floating profile cards */}
-      {PREVIEW_CARDS.map((c, i) => (
-        <View
-          key={i}
-          style={[s.floatCard, { top: c.top, left: c.left, backgroundColor: c.bg, transform: [{ rotate: c.rotate }] }]}
-        >
-          <Text style={s.floatEmoji}>{c.emoji}</Text>
-        </View>
-      ))}
+      <Image 
+        source={require('../../assets/welcome_lady.png')} 
+        style={{ width: W, height: H * 0.55, position: 'absolute', top: 0 }} 
+        resizeMode="cover" 
+      />
 
       {/* Gradient overlay */}
       <View style={s.overlay} />
@@ -57,23 +47,8 @@ export default function WelcomeScreen({ navigation }) {
   );
 }
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.snow },
-
-  floatCard: {
-    position: 'absolute',
-    width: 88,
-    height: 108,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.10,
-    shadowRadius: 14,
-    elevation: 5,
-  },
-  floatEmoji: { fontSize: 42 },
 
   overlay: {
     position: 'absolute',

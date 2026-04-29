@@ -5,7 +5,8 @@ import {
   ScrollView, Dimensions, Image, Alert, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { InputField, SelectPill, PrimaryButton, GhostButton } from '../components/UI';
 import { supabase } from '../supabase/client';
 import { pickAndUploadPhoto } from '../supabase/storage';
@@ -49,6 +50,8 @@ const SIGNS = [
 ];
 
 export default function ProfileSetupScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
@@ -327,7 +330,7 @@ export default function ProfileSetupScreen({ navigation }) {
 
 const PHOTO_SIZE = (W - 56 - 8) / 3;
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.white },
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

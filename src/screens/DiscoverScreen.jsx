@@ -5,7 +5,8 @@ import {
   TouchableOpacity, Image, Dimensions, ScrollView, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { radius } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 
 // ── Astrology compatibility engine ───────────────────────────────────────────
@@ -46,6 +47,8 @@ function timeAgo(dateStr) {
 }
 
 function ProfileCard({ profile, style, panHandlers, likeOpacity, passOpacity, superOpacity }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [photoIdx, setPhotoIdx] = useState(0);
   const photos = profile.photo_urls?.length > 0 ? profile.photo_urls : [null];
   const compatScore = profile._compatScore ?? 1;
@@ -55,7 +58,7 @@ function ProfileCard({ profile, style, panHandlers, likeOpacity, passOpacity, su
       <View style={s.cardPhoto}>
         <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.bg ?? '#FFE8D6', alignItems: 'center', justifyContent: 'center' }]}>
           {photos[photoIdx]
-            ? <Image source={{ uri: photos[photoIdx] }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+            ? <Image source={{ uri: photos[photoIdx] }} style={{ width: '100%', height: '100%', position: 'absolute' }} resizeMode="cover" />
             : <Ionicons name="person" size={80} color={colors.ash} />}
         </View>
 
@@ -121,6 +124,8 @@ function ProfileCard({ profile, style, panHandlers, likeOpacity, passOpacity, su
 }
 
 export default function DiscoverScreen({ navigation }) {
+  const { colors, shadow, isDark } = useTheme();
+  const s = getStyles(colors, shadow, isDark);
   const [profiles, setProfiles] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [myUid, setMyUid]   = useState(null);
@@ -138,13 +143,22 @@ export default function DiscoverScreen({ navigation }) {
       const sign = me?.astrology_sign ?? '';
       setMySign(sign);
 
-      const { data } = await supabase
+      // Fetch my past swipes
+      const { data: pastSwipes } = await supabase.from('swipes').select('swiped_id').eq('swiper_id', session.user.id);
+      const swipedIds = (pastSwipes || []).map(s => s.swiped_id);
+
+      let query = supabase
         .from('users')
         .select('id, name, username, city, region, bio, photo_urls, astrology_sign, last_seen, hide_last_seen')
         .neq('id', session.user.id)
         .eq('profile_complete', true)
-        .eq('show_me_on_cupid', true)
-        .limit(40);
+        .eq('show_me_on_cupid', true);
+
+      if (swipedIds.length > 0) {
+        query = query.not('id', 'in', `(${swipedIds.join(',')})`);
+      }
+
+      const { data } = await query.limit(40);
 
       if (data && data.length > 0) {
         // Score + sort by astrology compatibility (primary factor)
@@ -298,7 +312,7 @@ export default function DiscoverScreen({ navigation }) {
 
 const CARD_H = H * 0.60;
 
-const s = StyleSheet.create({
+const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.snow },
 
   header: {
@@ -323,7 +337,7 @@ const s = StyleSheet.create({
   },
   cardPhoto: {
     height: '65%', overflow: 'hidden', position: 'relative',
-    backgroundColor: '#FFE8D6', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FFE8D6',
   },
 
   photoNavLeft:  { position: 'absolute', left: 0,  top: 0, bottom: 0, width: '40%' },

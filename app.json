@@ -3,6 +3,8 @@
     "name": "Cupid",
     "slug": "cupid",
     "version": "1.0.0",
+    "icon": "./assets/icon.png",
+    "scheme": "cupid",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": {
@@ -14,6 +16,17 @@
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ee423df6-b8d5-452e-9c0e-40bce64326d6"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ee423df6-b8d5-452e-9c0e-40bce64326d6"
+    }
   }
 }
