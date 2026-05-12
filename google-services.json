@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1078178619703",
+    "project_id": "cupid-5292e",
+    "storage_bucket": "cupid-5292e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1078178619703:android:efb2c65a3bc332c351bab2",
+        "android_client_info": {
+          "package_name": "com.lucas.cupid"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1078178619703-ov9fcd1pje8j79khk5comgis3jmi1208.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAR8GXqzIqphW7l2KbWl1kHLbzwkwOwIs0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1078178619703-ov9fcd1pje8j79khk5comgis3jmi1208.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
