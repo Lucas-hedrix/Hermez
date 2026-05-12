@@ -1,2 +1,5 @@
 node_modules
 .expo/
+dist/
+serviceAccountKey.json
+cupid-5292e-firebase-adminsdk-fbsvc-7ca494b531.json
