@@ -12,10 +12,20 @@
       "bundleIdentifier": "com.lucas.cupid"
     },
     "android": {
-      "package": "com.lucas.cupid"
+      "package": "com.lucas.cupid",
+      "googleServicesFile":"./google-services.json"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FF6B35",
+          "sounds": []
+        }
+      ],
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {
