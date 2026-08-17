@@ -1,12 +1,11 @@
-// src/auth/session.js
-// Stores the Firebase Auth session in AsyncStorage so it persists across
-// app restarts. The SDK can't do this in Expo Go (new arch), so we do it
-// manually using the REST API tokens.
+
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+
 const FIREBASE_API_KEY = 'AIzaSyCZ7Ir4TtO7qM8K4SbN3uc18_nW8tQXr7M';
 const KEY = '@cupid_session';
+
 
 // ── Persist & retrieve ──────────────────────────────────────────────────────
 

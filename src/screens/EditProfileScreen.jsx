@@ -2,20 +2,15 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, Alert,
+  TextInput, ActivityIndicator, Alert, Switch
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { detectRegion } from '../supabase/storage';
-
-const HOBBIES = [
-  'Reading', 'Cooking', 'Fitness', 'Travel', 'Music', 'Art',
-  'Gaming', 'Dancing', 'Photography', 'Hiking', 'Movies', 'Sports',
-  'Yoga', 'Fashion', 'Technology', 'Food', 'Nature', 'Writing',
-  'Swimming', 'Cycling',
-];
+import { PROFILE_VIBES as VIBES } from '../constants/vibes';
+import { INTERESTS as HOBBY_INTERESTS } from '../constants/interests';
 
 const SIGNS = [
   { sign: 'Aries',       symbol: '♈' },
@@ -40,6 +35,9 @@ export default function EditProfileScreen({ navigation }) {
   const [region,  setRegion]  = useState('');
   const [hobbies, setHobbies] = useState([]);
   const [sign,    setSign]    = useState('');
+  const [currentVibe, setCurrentVibe] = useState('');
+  const [openTo, setOpenTo] = useState([]);
+  const [datingEnabled, setDatingEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
   const [uid,     setUid]     = useState(null);
@@ -50,12 +48,15 @@ export default function EditProfileScreen({ navigation }) {
       if (!session) { setLoading(false); return; }
       setUid(session.user.id);
 
-      const { data } = await supabase.from('users').select('name, bio, region, hobbies, astrology_sign').eq('id', session.user.id).single();
+      const { data } = await supabase.from('users').select('name, bio, region, hobbies, astrology_sign, current_vibe, open_to, dating_enabled').eq('id', session.user.id).single();
       if (data) {
         setName(data.name   ?? '');
         setBio(data.bio     ?? '');
         setHobbies(Array.isArray(data.hobbies) ? data.hobbies : []);
         setSign(data.astrology_sign ?? '');
+        setCurrentVibe(data.current_vibe ?? '');
+        setOpenTo(Array.isArray(data.open_to) ? data.open_to : []);
+        setDatingEnabled(data.dating_enabled ?? false);
 
         // Auto-detect region if empty
         if (!data.region) {
@@ -85,6 +86,9 @@ export default function EditProfileScreen({ navigation }) {
         region,
         hobbies,
         astrology_sign: sign,
+        current_vibe: currentVibe,
+        open_to: openTo,
+        dating_enabled: datingEnabled,
       }).eq('id', uid);
       if (error) throw error;
       Alert.alert('Saved!', 'Your profile has been updated.', [
@@ -185,6 +189,60 @@ export default function EditProfileScreen({ navigation }) {
           </View>
         </View>
 
+        {/* The Vibe System */}
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>Your Vibe</Text>
+          <Text style={s.sectionSub}>What are you looking for right now?</Text>
+          <View style={s.signGrid}>
+            {VIBES.map(({ id, label, icon }) => (
+              <TouchableOpacity
+                key={id}
+                style={[s.signPill, currentVibe === id && s.signPillActive]}
+                onPress={() => setCurrentVibe(prev => prev === id ? '' : id)}
+              >
+                <Ionicons name={icon} size={16} color={currentVibe === id ? colors.white : colors.graphite} />
+                <Text style={[s.signName, currentVibe === id && s.signNameActive]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[s.sectionLabel, { marginTop: 24 }]}>Open To</Text>
+          <Text style={s.sectionSub}>What else are you generally open to?</Text>
+          <View style={s.hobbyGrid}>
+            {VIBES.map(({ id, label, icon }) => {
+              const selected = openTo.includes(id);
+              const disabled = !selected && openTo.length >= 3;
+              return (
+                <TouchableOpacity
+                  key={id}
+                  style={[s.hobbyPill, selected && s.hobbyPillActive, disabled && s.hobbyPillDisabled]}
+                  onPress={() => {
+                    if (disabled) return;
+                    setOpenTo(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+                  }}
+                  activeOpacity={disabled ? 1 : 0.7}
+                >
+                  <Ionicons name={icon} size={14} color={selected ? colors.ember : colors.stone} style={{ marginRight: 4 }} />
+                  <Text style={[s.hobbyText, selected && s.hobbyTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={[s.fieldWrap, { marginTop: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 0 }]}>
+            <View style={{ flex: 1, paddingRight: 16 }}>
+              <Text style={s.fieldLabel}>Dating Mode</Text>
+              <Text style={s.hint}>Enable to be shown in the Dating deck to other adult users.</Text>
+            </View>
+            <Switch
+              value={datingEnabled}
+              onValueChange={setDatingEnabled}
+              trackColor={{ false: colors.fog, true: colors.ember }}
+              thumbColor={colors.white}
+            />
+          </View>
+        </View>
+
         {/* Astrology sign */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>Star sign</Text>
@@ -194,7 +252,7 @@ export default function EditProfileScreen({ navigation }) {
               <TouchableOpacity
                 key={sg}
                 style={[s.signPill, sign === sg && s.signPillActive]}
-                onPress={() => setSign(sg)}
+                onPress={() => setSign(prev => prev === sg ? '' : sg)}
               >
                 <Text style={s.signSymbol}>{symbol}</Text>
                 <Text style={[s.signName, sign === sg && s.signNameActive]}>{sg}</Text>
@@ -208,17 +266,23 @@ export default function EditProfileScreen({ navigation }) {
           <Text style={s.sectionLabel}>Hobbies & interests</Text>
           <Text style={s.sectionSub}>Pick up to 10</Text>
           <View style={s.hobbyGrid}>
-            {HOBBIES.map(h => {
-              const selected = hobbies.includes(h);
+            {HOBBY_INTERESTS.map(item => {
+              const selected = hobbies.includes(item.id);
               const disabled = !selected && hobbies.length >= 10;
               return (
                 <TouchableOpacity
-                  key={h}
+                  key={item.id}
                   style={[s.hobbyPill, selected && s.hobbyPillActive, disabled && s.hobbyPillDisabled]}
-                  onPress={() => !disabled && toggleHobby(h)}
+                  onPress={() => !disabled && toggleHobby(item.id)}
                   activeOpacity={disabled ? 1 : 0.7}
                 >
-                  <Text style={[s.hobbyText, selected && s.hobbyTextActive]}>{h}</Text>
+                  <Ionicons
+                    name={item.icon}
+                    size={16}
+                    color={selected ? colors.ember : colors.ash}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[s.hobbyText, selected && s.hobbyTextActive]}>{item.label}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -279,6 +343,7 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   hobbyPill: {
     paddingVertical: 8, paddingHorizontal: 14, borderRadius: radius.full,
     borderWidth: 1, borderColor: colors.fog, backgroundColor: colors.snow,
+    flexDirection: 'row', alignItems: 'center',
   },
   hobbyPillActive:  { backgroundColor: colors.emberLight, borderColor: colors.ember },
   hobbyPillDisabled:{ opacity: 0.4 },

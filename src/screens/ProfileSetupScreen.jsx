@@ -10,6 +10,8 @@ import { useTheme } from '../theme/ThemeContext';
 import { InputField, SelectPill, PrimaryButton, GhostButton } from '../components/UI';
 import { supabase } from '../supabase/client';
 import { pickAndUploadPhoto } from '../supabase/storage';
+import { PROFILE_VIBES } from '../constants/vibes';
+import { INTERESTS as HOBBY_INTERESTS } from '../constants/interests';
 
 const { width: W } = Dimensions.get('window');
 
@@ -25,13 +27,6 @@ const STEP_SUBS = [
   'Add at least one photo',
   'Who are you looking for?',
   'What do you like?',
-];
-
-const HOBBIES = [
-  'Reading', 'Cooking', 'Fitness', 'Travel', 'Music', 'Art',
-  'Gaming', 'Dancing', 'Photography', 'Hiking', 'Movies', 'Sports',
-  'Yoga', 'Fashion', 'Technology', 'Food', 'Nature', 'Writing',
-  'Swimming', 'Cycling',
 ];
 
 const SIGNS = [
@@ -65,6 +60,7 @@ export default function ProfileSetupScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [hobbies, setHobbies] = useState([]);
   const [sign, setSign] = useState('');
+  const [openTo, setOpenTo] = useState([]);
 
   const next = async () => {
     if (step < 3) {
@@ -91,6 +87,9 @@ export default function ProfileSetupScreen({ navigation }) {
             hobbies: hobbies,
             astrology_sign: sign,
             profile_complete: true,
+            show_me_on_cupid: true,
+            hide_last_seen: false,
+            open_to: openTo,
           })
           .eq('id', session.user.id);
 
@@ -199,6 +198,16 @@ export default function ProfileSetupScreen({ navigation }) {
                   {i === 0 && uri && uploadingIdx !== 0 && (
                     <View style={s.mainBadge}><Text style={s.mainBadgeText}>Main</Text></View>
                   )}
+                  {uri && uploadingIdx !== i && (
+                    <View style={{
+                      position: 'absolute', bottom: 6, right: 6,
+                      backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, width: 24, height: 24,
+                      alignItems: 'center', justifyContent: 'center',
+                      borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)',
+                    }}>
+                      <Ionicons name="pencil" size={12} color="#FFF" />
+                    </View>
+                  )}
                 </TouchableOpacity>
               ))}
             </View>
@@ -256,7 +265,7 @@ export default function ProfileSetupScreen({ navigation }) {
               {photos[0]
                 ? <Image source={{ uri: photos[0] }} style={s.previewImg} />
                 : <View style={[s.previewImg, s.previewImgEmpty]}>
-                    <Text style={s.previewEmoji}>😊</Text>
+                    <Ionicons name="person" size={60} color={colors.ember} style={s.previewEmoji} />
                   </View>
               }
               <View style={s.previewOverlay} />
@@ -271,6 +280,31 @@ export default function ProfileSetupScreen({ navigation }) {
         {/* ── STEP 3: Interests & Star Sign ── */}
         {step === 3 && (
           <View style={s.stepBody}>
+            <View style={s.fieldWrap}>
+              <Text style={s.fieldLabel}>What vibes are you open to?</Text>
+              <Text style={s.photoHint}>Pick up to 3</Text>
+              <View style={s.hobbyGrid}>
+                {PROFILE_VIBES.map(v => {
+                  const selected = openTo.includes(v.id);
+                  const disabled = !selected && openTo.length >= 3;
+                  return (
+                    <TouchableOpacity
+                      key={v.id}
+                      style={[s.hobbyPill, selected && s.hobbyPillActive, disabled && s.hobbyPillDisabled]}
+                      onPress={() => {
+                        if (disabled) return;
+                        setOpenTo(prev => prev.includes(v.id) ? prev.filter(x => x !== v.id) : [...prev, v.id]);
+                      }}
+                      activeOpacity={disabled ? 1 : 0.7}
+                    >
+                      <Ionicons name={v.icon} size={14} color={selected ? colors.ember : colors.stone} style={{ marginRight: 4 }} />
+                      <Text style={[s.hobbyText, selected && s.hobbyTextActive]}>{v.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
             <View style={s.fieldWrap}>
               <Text style={s.fieldLabel}>Star sign</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -291,20 +325,26 @@ export default function ProfileSetupScreen({ navigation }) {
               <Text style={s.fieldLabel}>Hobbies & interests</Text>
               <Text style={s.photoHint}>Pick up to 10</Text>
               <View style={s.hobbyGrid}>
-                {HOBBIES.map(h => {
-                  const selected = hobbies.includes(h);
+                {HOBBY_INTERESTS.map(item => {
+                  const selected = hobbies.includes(item.id);
                   const disabled = !selected && hobbies.length >= 10;
                   return (
                     <TouchableOpacity
-                      key={h}
+                      key={item.id}
                       style={[s.hobbyPill, selected && s.hobbyPillActive, disabled && s.hobbyPillDisabled]}
                       onPress={() => {
                         if (disabled) return;
-                        setHobbies(prev => prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h]);
+                        setHobbies(prev => prev.includes(item.id) ? prev.filter(x => x !== item.id) : [...prev, item.id]);
                       }}
                       activeOpacity={disabled ? 1 : 0.7}
                     >
-                      <Text style={[s.hobbyText, selected && s.hobbyTextActive]}>{h}</Text>
+                      <Ionicons
+                        name={item.icon}
+                        size={16}
+                        color={selected ? colors.ember : colors.ash}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={[s.hobbyText, selected && s.hobbyTextActive]}>{item.label}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -424,6 +464,7 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   hobbyPill: {
     paddingVertical: 8, paddingHorizontal: 14, borderRadius: radius.full,
     borderWidth: 1, borderColor: colors.fog, backgroundColor: colors.snow,
+    flexDirection: 'row', alignItems: 'center',
   },
   hobbyPillActive:  { backgroundColor: colors.emberLight, borderColor: colors.ember },
   hobbyPillDisabled:{ opacity: 0.4 },

@@ -1,43 +1,65 @@
-// screens/MatchScreen.jsx
-// Shown as a modal overlay when a mutual like occurs
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Animated, Dimensions,
+  Animated, Dimensions, Image
 } from 'react-native';
-import { radius, colors } from '../theme';
+import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
+import { supabase } from '../supabase/client';
+import { getPlaceholderUrl } from '../utils/placeholders';
 
-const { width: W } = Dimensions.get('window');
+const { width: W, height: H } = Dimensions.get('window');
 
-// Simple confetti dot component
-function Dot({ color, style }) {
-  return <View style={[confettiStyles.dot, { backgroundColor: color }, style]} />;
+// Live confetti dot component
+function Dot({ color, startX, startY, delay }) {
+  const translateY = useRef(new Animated.Value(startY - 50)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(delay),
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(translateY, { toValue: H + 50, duration: 2500 + Math.random() * 1500, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, []);
+
+  return <Animated.View style={[confettiStyles.dot, { backgroundColor: color, left: startX, opacity, transform: [{ translateY }] }]} />;
 }
-const confettiStyles = StyleSheet.create({ dot: { position: 'absolute', width: 8, height: 8, borderRadius: 4 } });
-
-const CONFETTI = [
-  { color: colors.ember, top: '10%', left: '10%' },
-  { color: colors.gold, top: '15%', left: '70%' },
-  { color: '#4CAF50', top: '20%', left: '40%' },
-  { color: colors.ember, top: '5%', left: '55%' },
-  { color: colors.gold, top: '8%', left: '25%' },
-  { color: '#9B59B6', top: '12%', left: '85%' },
-  { color: colors.ember, top: '25%', left: '5%' },
-  { color: colors.gold, top: '18%', left: '90%' },
-];
+const confettiStyles = StyleSheet.create({ dot: { position: 'absolute', width: 10, height: 10, borderRadius: 5 } });
 
 export default function MatchScreen({ route, navigation }) {
   const { colors, shadow, isDark } = useTheme();
   const s = getStyles(colors, shadow, isDark);
-  // In production: const { match, otherUser } = route.params;
-  const otherUser = { name: 'Amara', age: 25, emoji: '🌸', bg: '#FFE8D6' };
-  const myEmoji = '😊';
+  
+  const otherUser = route?.params?.otherUser || { name: 'Someone', photo_urls: [] };
+  const [myPhoto, setMyPhoto] = useState(null);
+  const [myName, setMyName] = useState(null);
 
   const scale = useRef(new Animated.Value(0)).current;
   const fadeIn = useRef(new Animated.Value(0)).current;
 
+  // Generate random confetti drops
+  const confettiPieces = useRef(Array.from({ length: 30 }).map((_, i) => ({
+    id: i,
+    color: [colors.ember, colors.gold, '#4CAF50', '#9B59B6', '#FF9800'][Math.floor(Math.random() * 5)],
+    startX: Math.random() * W,
+    startY: -(Math.random() * 200),
+    delay: Math.random() * 1000
+  }))).current;
+
   useEffect(() => {
+    // Fetch my photo
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data } = await supabase.from('users').select('name, photo_urls').eq('id', session.user.id).single();
+        if (data?.photo_urls?.length > 0) setMyPhoto(data.photo_urls[0]);
+        if (data?.name) setMyName(data.name);
+      }
+    })();
+
     Animated.parallel([
       Animated.spring(scale, { toValue: 1, friction: 5, tension: 80, useNativeDriver: true }),
       Animated.timing(fadeIn, { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -46,11 +68,10 @@ export default function MatchScreen({ route, navigation }) {
 
   return (
     <View style={s.root}>
-      {/* Confetti */}
-      {CONFETTI.map((c, i) => <Dot key={i} color={c.color} style={{ top: c.top, left: c.left, width: 10 + (i % 3) * 4, height: 10 + (i % 3) * 4, borderRadius: 3 }} />)}
+      {/* Live Confetti */}
+      {confettiPieces.map(c => <Dot key={c.id} color={c.color} startX={c.startX} startY={c.startY} delay={c.delay} />)}
 
       <Animated.View style={[s.content, { opacity: fadeIn }]}>
-        {/* Spark icon */}
         <Text style={s.sparkIcon}>✦</Text>
 
         <Text style={s.headline}>It's a{'\n'}Spark!</Text>
@@ -59,8 +80,8 @@ export default function MatchScreen({ route, navigation }) {
         {/* Avatar pair */}
         <Animated.View style={[s.avatarPair, { transform: [{ scale }] }]}>
           <View style={[s.avatarWrap, s.avatarLeft]}>
-            <View style={[s.avatar, { backgroundColor: '#FFF0ED' }]}>
-              <Text style={s.avatarEmoji}>{myEmoji}</Text>
+            <View style={[s.avatar, { backgroundColor: colors.fog, overflow: 'hidden' }]}>
+              {myPhoto ? <Image source={{ uri: myPhoto }} style={StyleSheet.absoluteFillObject} /> : <Image source={{ uri: getPlaceholderUrl(myName) }} style={StyleSheet.absoluteFillObject} />}
             </View>
             <View style={s.avatarRing} />
           </View>
@@ -70,8 +91,8 @@ export default function MatchScreen({ route, navigation }) {
           </View>
 
           <View style={[s.avatarWrap, s.avatarRight]}>
-            <View style={[s.avatar, { backgroundColor: otherUser.bg }]}>
-              <Text style={s.avatarEmoji}>{otherUser.emoji}</Text>
+            <View style={[s.avatar, { backgroundColor: colors.fog, overflow: 'hidden' }]}>
+              {otherUser.photo_urls?.[0] ? <Image source={{ uri: otherUser.photo_urls[0] }} style={StyleSheet.absoluteFillObject} /> : <Image source={{ uri: getPlaceholderUrl(otherUser.name) }} style={StyleSheet.absoluteFillObject} />}
             </View>
             <View style={s.avatarRing} />
           </View>
@@ -84,7 +105,7 @@ export default function MatchScreen({ route, navigation }) {
         <View style={s.actions}>
           <TouchableOpacity
             style={s.btnMessage}
-            onPress={() => navigation?.navigate('FriendChat', { matchId: matchData?.id || '123', otherUser })}
+            onPress={() => navigation?.navigate('Matches')}
             activeOpacity={0.88}
           >
             <Text style={s.btnMessageText}>Send a message 💬</Text>
@@ -111,6 +132,7 @@ export default function MatchScreen({ route, navigation }) {
 
 const AVG = 90;
 
+import { Ionicons } from '@expo/vector-icons';
 const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root: {
     flex: 1,
@@ -118,8 +140,9 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
+    overflow: 'hidden'
   },
-  content: { alignItems: 'center', width: '100%' },
+  content: { alignItems: 'center', width: '100%', zIndex: 10 },
 
   sparkIcon: { fontSize: 36, color: colors.ember, marginBottom: 16 },
   headline: {
@@ -140,9 +163,9 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   avatar: {
     width: AVG, height: AVG, borderRadius: AVG / 2,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 3, borderColor: colors.ink,
+    borderWidth: 3, borderColor: '#0F0D0D',
   },
-  avatarEmoji: { fontSize: 44 },
+  avatarEmoji: { fontSize: 36, color: colors.ink, fontWeight: '700' },
   avatarRing: {
     position: 'absolute', inset: -4,
     borderWidth: 2, borderColor: colors.ember + '50',

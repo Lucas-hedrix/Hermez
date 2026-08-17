@@ -1,26 +1,34 @@
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { radius, fonts } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
+import GlassButton from './GlassButton';
 
 // ─── PrimaryButton ─────────────────────────────────────────────────────────
-export function PrimaryButton({ label, onPress, loading, style }) {  const { colors, shadow, isDark } = useTheme();
-  const styles = getStyles(colors, shadow, isDark);
+export function PrimaryButton({ label, onPress, loading, style }) {  
+  const { colors } = useTheme();
   return (
-    <TouchableOpacity style={[styles.primary, style]} onPress={onPress} activeOpacity={0.85} disabled={loading}>
-      {loading
-        ? <ActivityIndicator color={colors.white} />
-        : <Text style={styles.primaryText}>{label}</Text>}
-    </TouchableOpacity>
+    <GlassButton
+      title={label}
+      onPress={onPress}
+      loading={loading}
+      style={style}
+      tint="light"
+      color={colors.ember}
+    />
   );
 }
 
 // ─── GhostButton ───────────────────────────────────────────────────────────
-export function GhostButton({ label, onPress, style }) {  const { colors, shadow, isDark } = useTheme();
-  const styles = getStyles(colors, shadow, isDark);
+export function GhostButton({ label, onPress, style }) {  
+  const { colors } = useTheme();
   return (
-    <TouchableOpacity style={[styles.ghost, style]} onPress={onPress} activeOpacity={0.7}>
-      <Text style={styles.ghostText}>{label}</Text>
-    </TouchableOpacity>
+    <GlassButton
+      title={label}
+      onPress={onPress}
+      style={style}
+      tint="light"
+      color={colors.stone}
+    />
   );
 }
 
