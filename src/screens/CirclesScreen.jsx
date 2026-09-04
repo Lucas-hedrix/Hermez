@@ -121,7 +121,7 @@ function CircleCard({ circle, onPress, onAction, colors }) {
           <Text style={styles.cardDesc} numberOfLines={2}>{circle.description || 'A place to connect, share, and belong.'}</Text>
           <View style={styles.cardFooter}>
             <View style={styles.memberMeta}><Ionicons name="people-outline" size={14} color={colors.stone} /><Text style={styles.memberCountText}>{circle.member_count ?? 0} members</Text>{circle.online_count ? <><View style={styles.onlineDot} /><Text style={styles.memberCountText}>{circle.online_count} online</Text></> : null}</View>
-            <View style={styles.memberAvatars}>{(circle.member_previews ?? []).slice(0, 3).map((member, index) => <ExpoImagekey={member.user_id ?? index} source={{ uri: member.users?.photo_urls?.[0] || getPlaceholderUrl(member.users?.name) }} style={[styles.memberAvatar, { marginLeft: index ? -7 : 0 }]} />)}</View>
+            <View style={styles.memberAvatars}>{(circle.member_previews ?? []).slice(0, 3).map((member, index) => <ExpoImage ey={member.user_id ?? index} source={{ uri: member.users?.photo_urls?.[0] || getPlaceholderUrl(member.users?.name) }} style={[styles.memberAvatar, { marginLeft: index ? -7 : 0 }]} />)}</View>
           </View>
           <TouchableOpacity style={[styles.circleAction, membership && styles.circleActionJoined]} onPress={onAction} activeOpacity={0.85}>
             <Text style={[styles.circleActionText, membership && styles.circleActionTextJoined]}>{actionLabel}</Text>
