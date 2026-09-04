@@ -30,14 +30,7 @@
         }
       ],
       "expo-web-browser",
-      [
-        "expo-font",
-        {
-          "fonts": [
-            "./assets/fonts/MaterialCommunityIcons.ttf"
-          ]
-        }
-      ],
+      "expo-font",
       "expo-image",
       "expo-status-bar",
       "expo-asset"
