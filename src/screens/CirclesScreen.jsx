@@ -258,7 +258,7 @@ function ManageMembersModal({ visible, onClose, circleId, circleName, isOwner, m
                 return (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-                      <ExpoImagesource={{ uri: u?.photo_urls?.[0] || 'https://via.placeholder.com/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+                      <ExpoImage source={{ uri: u?.photo_urls?.[0] || 'https://via.placeholder.com/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
                       <View>
                         <Text style={{ color: colors.ink, fontWeight: '700' }}>{u?.name || 'User'}</Text>
                         <Text style={{ color: colors.stone, fontSize: 12 }}>@{u?.username}</Text>
@@ -303,7 +303,7 @@ function ManageMembersModal({ visible, onClose, circleId, circleName, isOwner, m
                 return (
                   <View style={{ backgroundColor: colors.snow, padding: 12, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: colors.fog }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                      <ExpoImagesource={{ uri: u?.photo_urls?.[0] || 'https://via.placeholder.com/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+                      <ExpoImage source={{ uri: u?.photo_urls?.[0] || 'https://via.placeholder.com/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
                       <View>
                         <Text style={{ color: colors.ink, fontWeight: '700' }}>{u?.name || 'User'}</Text>
                         <Text style={{ color: colors.stone, fontSize: 12 }}>@{u?.username}</Text>
@@ -874,7 +874,7 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, 
   return (
     <View style={{ flex: 1, backgroundColor: colors.snow }}>
       {circleCover ? (
-        <ExpoImagesource={{ uri: circleCover }} style={styles.detailCover} contentFit="cover" />
+        <ExpoImage source={{ uri: circleCover }} style={styles.detailCover} contentFit="cover" />
       ) : null}
       {/* Header */}
       <View style={[styles.detailHeader, { backgroundColor: colors.white, borderBottomColor: colors.fog }]}>
@@ -981,9 +981,9 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, 
               {!isMine && (
                 <View style={[styles.bubbleAvatar, { backgroundColor: color + '33' }]}>
                   {photo ? (
-                    <ExpoImagesource={{ uri: photo }} style={styles.bubbleAvatarImg} />
+                    <ExpoImage source={{ uri: photo }} style={styles.bubbleAvatarImg} />
                   ) : (
-                    <ExpoImagesource={{ uri: getPlaceholderUrl(user?.name) }} style={styles.bubbleAvatarImg} />
+                    <ExpoImage source={{ uri: getPlaceholderUrl(user?.name) }} style={styles.bubbleAvatarImg} />
                   )}
                 </View>
               )}
@@ -1026,7 +1026,7 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, 
                         onPress={() => setViewingPostImage(item.image_url)}
                         activeOpacity={0.9}
                       >
-                        <ExpoImagesource={{ uri: item.image_url }} style={styles.bubbleMedia} contentFit="cover" />
+                        <ExpoImage source={{ uri: item.image_url }} style={styles.bubbleMedia} contentFit="cover" />
                       </TouchableOpacity>
                     )
                   ) : null}
@@ -1051,9 +1051,9 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, 
               {isMine && (
                 <View style={[styles.bubbleAvatar, { backgroundColor: color + '33' }]}>
                   {photo ? (
-                    <ExpoImagesource={{ uri: photo }} style={styles.bubbleAvatarImg} />
+                    <ExpoImage source={{ uri: photo }} style={styles.bubbleAvatarImg} />
                   ) : (
-                    <ExpoImagesource={{ uri: getPlaceholderUrl(user?.name) }} style={styles.bubbleAvatarImg} />
+                    <ExpoImage source={{ uri: getPlaceholderUrl(user?.name) }} style={styles.bubbleAvatarImg} />
                   )}
                 </View>
               )}
@@ -1105,7 +1105,7 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, 
                     </Text>
                   </View>
                 ) : (
-                  <ExpoImagesource={{ uri: postMediaPreview }} style={styles.postImagePreview} />
+                  <ExpoImage source={{ uri: postMediaPreview }} style={styles.postImagePreview} />
                 )}
                 {mediaUploading ? (
                   <View style={styles.postImageUploading}>
@@ -1159,9 +1159,9 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, 
                   >
                     <View style={[styles.mentionAvatar, { backgroundColor: colors.fog }]}>
                       {u.photo_urls?.[0] ? (
-                        <ExpoImagesource={{ uri: u.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                        <ExpoImage source={{ uri: u.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
                       ) : (
-                        <ExpoImagesource={{ uri: getPlaceholderUrl(u.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                        <ExpoImage source={{ uri: getPlaceholderUrl(u.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
                       )}
                     </View>
                     <View style={{ flex: 1 }}>
@@ -1716,7 +1716,7 @@ export default function CirclesScreen({ navigation }) {
               <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={styles.coverUploadBox}>
                   {cCover ? (
-                    <ExpoImagesource={{ uri: cCover }} style={styles.coverPreview} />
+                    <ExpoImage source={{ uri: cCover }} style={styles.coverPreview} />
                   ) : null}
                   <TouchableOpacity style={styles.coverBtn} onPress={handlePickCover}>
                     <Ionicons name="camera" size={20} color={colors.ink} />

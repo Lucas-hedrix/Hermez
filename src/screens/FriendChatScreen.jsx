@@ -620,7 +620,7 @@ function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onRepl
               accessibilityLabel={item.type === GIPHY_CONTENT_TYPES.STICKER ? 'GIPHY sticker' : 'GIPHY GIF'}
             />
           ) : (
-            <ExpoImagesource={{ uri: item.media_url }} style={s.mediaContent} contentFit="contain" />
+            <ExpoImage source={{ uri: item.media_url }} style={s.mediaContent} contentFit="contain" />
           )}
           {item.text ? <Text style={[s.bubbleText, isMe && s.bubbleTextMe, { marginTop: 6, fontFamily }]}>{item.text}</Text> : null}
           {renderMeta()}
@@ -647,7 +647,7 @@ function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onRepl
               <View style={s.sharePostAuthorRow}>
                 <View style={s.sharePostAvatar}>
                   {shared.author?.photo_urls?.[0] ? (
-                    <ExpoImagesource={{ uri: shared.author.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
+                    <ExpoImage source={{ uri: shared.author.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
                   ) : (
                     <ExpoImage
                       source={{ uri: getPlaceholderUrl(shared.author?.name) }}
@@ -669,7 +669,7 @@ function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onRepl
                   onPress={() => onPressMedia(shared.image_url, false)}
                   activeOpacity={0.85}
                 >
-                  <ExpoImagesource={{ uri: shared.image_url }} style={s.sharePostImage} contentFit="cover" />
+                  <ExpoImage source={{ uri: shared.image_url }} style={s.sharePostImage} contentFit="cover" />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -2248,7 +2248,7 @@ export default function FriendChatScreen({ route, navigation }) {
                   cachePolicy="none"
                 />
               ) : (
-                <ExpoImagesource={{ uri: selectedMedia.uri }} style={s.previewImage} />
+                <ExpoImage source={{ uri: selectedMedia.uri }} style={s.previewImage} />
               )}
               {selectedMedia.type === 'video' && (
                 <View style={s.previewVideoOverlay}>
@@ -2435,7 +2435,7 @@ export default function FriendChatScreen({ route, navigation }) {
           ) : viewMedia?.isGiphy ? (
             <ExpoImage source={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" cachePolicy="none" />
           ) : (
-            <ExpoImagesource={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" />
+            <ExpoImage source={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" />
           )}
         </View>
       </Modal>
