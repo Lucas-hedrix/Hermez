@@ -4,6 +4,7 @@
   import { Ionicons } from '@expo/vector-icons';
   import { supabase } from '../supabase/client';
   import { signInWithGoogle } from '../supabase/googleAuth';
+  import { PASSWORD_RESET_REDIRECT } from '../utils/authRedirect';
   import {
     AuthHeroLayout,
     AuthField,
@@ -99,7 +100,9 @@
           email = profile.email;
         }
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: 'cupid://reset-password',
+          // On web this points at the PWA origin (the cupid:// scheme only
+          // works on the native app). See utils/authRedirect.js.
+          redirectTo: PASSWORD_RESET_REDIRECT,
         });
         if (error) throw error;
         Alert.alert('Reset link sent', `A password reset link has been sent to ${email}`);

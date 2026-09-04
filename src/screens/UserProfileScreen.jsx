@@ -1,15 +1,16 @@
+import { Image } from 'expo-image';
 // screens/UserProfileScreen.jsx — read-only view of another user's profile
 import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Dimensions, Image, ActivityIndicator, Alert,
-} from 'react-native';
+  Dimensions, ActivityIndicator, Alert} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import AnimatedSparkles from '../components/AnimatedSparkles';
 import SparkSheet from '../components/SparkSheet';
+import { SkeletonFeed, SkeletonProfileCard, SkeletonPost, SkeletonScreen } from '../components/Skeleton';
 import {
   getSparkBetween,
   getFriendshipBetween,
@@ -143,10 +144,7 @@ export default function UserProfileScreen({ navigation, route }) {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.snow, alignItems: 'center', justifyContent: 'center' }}>
-        <AnimatedSparkles size={48} color={colors.ember} />
-        <Text style={{ marginTop: 12, color: colors.stone, fontSize: 14 }}>Loading profile…</Text>
-      </View>
+      <SkeletonScreen><SkeletonProfileCard style={{ paddingTop: 60 }} /></SkeletonScreen>
     );
   }
 
@@ -308,7 +306,7 @@ export default function UserProfileScreen({ navigation, route }) {
         {/* Profile card — full profile for everyone; friends get Message CTA */}
         <View style={[s.profileCard, shadow.card]}>
           <View style={[s.mainPhoto, { backgroundColor: '#FFF0ED' }]}>
-            <Image source={{ uri: coverUrl }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+            <Image source={{ uri: coverUrl }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } contentFit="cover" />
             <View style={s.mainPhotoOverlay} pointerEvents="none" />
           </View>
 
@@ -352,7 +350,7 @@ export default function UserProfileScreen({ navigation, route }) {
                 <View style={s.photoGrid}>
                   {photoUrls.map((uri, i) => (
                     <View key={i} style={[s.photoThumb, { backgroundColor: '#FFF0ED' }]}>
-                      <Image source={{ uri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+                      <Image source={{ uri }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } contentFit="cover" />
                       {i === 0 && <View style={s.mainBadge}><Text style={s.mainBadgeText}>Main</Text></View>}
                     </View>
                   ))}
@@ -414,7 +412,7 @@ export default function UserProfileScreen({ navigation, route }) {
           </View>
 
           {postsLoading ? (
-            <ActivityIndicator color={colors.ember} style={{ marginVertical: 24 }} />
+            <SkeletonFeed itemCount={3} ItemComponent={SkeletonPost} style={{ paddingHorizontal: 16 }} />
           ) : posts.length === 0 ? (
             <View style={s.emptyPosts}>
               <Ionicons name="images-outline" size={32} color={colors.ash} style={{ marginBottom: 8 }} />
@@ -425,7 +423,7 @@ export default function UserProfileScreen({ navigation, route }) {
               {posts.map(post => (
                 <View key={post.id} style={s.postCard}>
                   {post.image_url
-                    ? <Image source={{ uri: post.image_url }} style={s.postImage} resizeMode="cover" />
+                    ? <Image source={{ uri: post.image_url }} style={s.postImage} contentFit="cover" />
                     : null}
                   {post.caption ? (
                     <View style={[s.postCaption, !post.image_url && s.postCaptionOnly]}>
@@ -558,7 +556,7 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
     width: (W - 32 - 10) / 2, borderRadius: radius.lg, overflow: 'hidden',
     backgroundColor: colors.white, borderWidth: 1, borderColor: colors.fog, minHeight: 120,
   },
-  postImage:        { width: '100%', height: 140 },
+  postImage:        { width: '100%', maxHeight: W * 0.4, minHeight: 100, resizeMode: 'contain' },
   postCaption:      { padding: 10 },
   postCaptionOnly:  { minHeight: 100, justifyContent: 'center' },
   postCaptionText:  { fontSize: 13, color: colors.graphite, lineHeight: 19 },

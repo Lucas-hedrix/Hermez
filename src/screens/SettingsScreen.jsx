@@ -1,13 +1,15 @@
+import { Image } from 'expo-image';
 // screens/SettingsScreen.jsx — central settings hub
 import { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Switch, Image, Platform, Alert,
-} from 'react-native';
+  Switch, Platform, Alert} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { radius, chatFonts, chatThemes } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { pickPhotoAsset } from '../supabase/storage';
+
+import { useOtaUpdate } from '../context/OtaUpdateContext';
 
 const ACCENT_COLORS = [
   { key: 'pink',   hex: '#FF4D6D' },
@@ -23,8 +25,10 @@ export default function SettingsScreen({ navigation }) {
     accentColor, changeAccentColor,
     chatFont, changeChatFont,
     chatTheme, changeChatTheme,
+    customChatThemes, addCustomChatTheme,
   } = useTheme();
   const s = getStyles(colors);
+  const { updateReady, isChecking, applyUpdate, runOtaCheck, updateMeta, lastError } = useOtaUpdate();
 
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -167,16 +171,36 @@ export default function SettingsScreen({ navigation }) {
                 )}
               </TouchableOpacity>
             ))}
+            {customChatThemes.map((uri) => {
+              const key = `custom:${uri}`;
+              return (
+                <TouchableOpacity key={key} onPress={() => changeChatTheme(key)} style={[
+                  s.themeThumb,
+                  { backgroundColor: chatTheme === key ? colors.emberLight : colors.snow, borderColor: chatTheme === key ? colors.ember : colors.fog },
+                ]}>
+                  <Image source={{ uri }} style={s.themeImage} />
+                  {chatTheme === key && (
+                    <View style={s.themeCheck}>
+                      <Ionicons name="checkmark" size={16} color="#FFF" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
             <TouchableOpacity onPress={async () => {
               const asset = await pickPhotoAsset();
               if (asset?.uri) {
-                changeChatTheme(`custom:${asset.uri}`);
+                await addCustomChatTheme(asset.uri);
               }
             }} style={[s.themeThumb, { backgroundColor: colors.snow, borderColor: colors.fog, borderStyle: 'dashed' }]}>
               <Ionicons name="add" size={28} color={colors.ash} />
             </TouchableOpacity>
           </ScrollView>
-          <Text style={s.selectedLabel}>{chatThemes[chatTheme]?.label || 'Theme 2'}</Text>
+          <Text style={s.selectedLabel}>{
+            chatTheme.startsWith('custom:')
+              ? 'Custom background'
+              : chatThemes[chatTheme]?.label || 'Theme 2'
+          }</Text>
         </View>
 
         {/* Discovery */}
@@ -246,6 +270,47 @@ export default function SettingsScreen({ navigation }) {
         {/* App */}
         <Text style={s.sectionTitle}>App</Text>
         <View style={s.card}>
+          <View style={s.settingRow}>
+            <View style={s.settingRowLeft}>
+              <View style={s.settingIconWrap}>
+                <Ionicons name="cloud-download-outline" size={18} color={colors.ember} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.settingLabel}>App updates</Text>
+                <Text style={s.settingSubLabel}>
+                  {updateReady
+                    ? 'Update downloaded — tap to restart'
+                    : isChecking
+                      ? 'Checking for updates…'
+                      : 'Pull the latest changes over the air'}
+                </Text>
+                {updateMeta?.channel ? (
+                  <Text style={s.updateMetaText}>Channel: {updateMeta.channel}</Text>
+                ) : null}
+                {updateMeta?.runtimeVersion ? (
+                  <Text style={s.updateMetaText}>Runtime: {updateMeta.runtimeVersion}</Text>
+                ) : null}
+                {lastError ? (
+                  <Text style={s.updateErrorText}>{lastError}</Text>
+                ) : null}
+              </View>
+            </View>
+          </View>
+
+          <View style={s.updateActions}>
+            {updateReady ? (
+              <TouchableOpacity style={s.updatePrimaryBtn} onPress={applyUpdate}>
+                <Text style={s.updatePrimaryBtnText}>Restart to update</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={s.updatePrimaryBtn} onPress={runOtaCheck} disabled={isChecking}>
+                <Text style={s.updatePrimaryBtnText}>{isChecking ? 'Checking…' : 'Check for updates'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={s.divider} />
+
           <TouchableOpacity style={s.navRow} onPress={() => navigation?.navigate('About')}>
             <View style={s.settingRowLeft}>
               <View style={s.settingIconWrap}>
@@ -308,6 +373,16 @@ const getStyles = (colors) => StyleSheet.create({
   },
   settingLabel: { fontSize: 15, fontWeight: '600', color: colors.ink },
   settingSubLabel: { fontSize: 12, color: colors.ash, marginTop: 2 },
+  updateMetaText: { fontSize: 11, color: colors.stone, marginTop: 4 },
+  updateErrorText: { fontSize: 11, color: colors.danger, marginTop: 4 },
+  updateActions: { paddingHorizontal: 16, paddingBottom: 14 },
+  updatePrimaryBtn: {
+    backgroundColor: colors.ember,
+    borderRadius: radius.full,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  updatePrimaryBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
   divider: { height: 1, backgroundColor: colors.fog, marginLeft: 64 },
 
   colorRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingBottom: 16 },
@@ -332,7 +407,7 @@ const getStyles = (colors) => StyleSheet.create({
     borderWidth: 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     position: 'relative',
   },
-  themeImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  themeImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   themeCheck: {
     position: 'absolute', top: 4, right: 4,
     backgroundColor: colors.ember, borderRadius: 10, width: 20, height: 20,

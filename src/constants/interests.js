@@ -5,7 +5,7 @@
  * Each interest has:
  * - id: unique identifier for storage
  * - label: display name
- * - icon: Ionicons name from @expo/vector-icons
+ * - icon: Ionicons name from expo-vector-icons
  * - color: hex color for selected state (matches vibe palette from theme/index.js)
  */
 

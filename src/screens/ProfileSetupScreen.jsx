@@ -1,9 +1,10 @@
+import { Image } from 'expo-image';
 // screens/ProfileSetupScreen.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, Dimensions, Image, Alert, ActivityIndicator,
-} from 'react-native';
+  ScrollView, Dimensions, Alert, ActivityIndicator,
+  BackHandler, Platform} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
@@ -94,6 +95,22 @@ export default function ProfileSetupScreen({ navigation }) {
           .eq('id', session.user.id);
 
         if (error) throw new Error(error.message);
+
+        // If this user was referred, the referrer earns ₦100 the moment
+        // their profile is complete. We call the server-side RPC; on
+        // success we pass the result to MainTabs so the user (referrer)
+        // can be celebrated with a confetti modal on next app entry.
+        // Note: this user is the REFERRED, not the referrer. The wallet
+        // credit goes to the OTHER user. We do not show any UI to the
+        // referred user in this iteration.
+        try {
+          const { tryCompleteReferral } = await import('../utils/referrals');
+          await tryCompleteReferral(session.user.id);
+        } catch (e) {
+          // Non-fatal — profile save already succeeded.
+          console.log('[ProfileSetupScreen] tryCompleteReferral failed:', e?.message);
+        }
+
         navigation?.navigate('MainTabs');
       } catch (err) {
         Alert.alert('Error saving profile', err.message);
@@ -103,6 +120,18 @@ export default function ProfileSetupScreen({ navigation }) {
     }
   };
   const back = () => { if (step > 0) setStep(s => s - 1); else navigation?.goBack(); };
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (step > 0) {
+        setStep((s) => s - 1);
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [step]);
 
   const pickPhoto = async (index) => {
     try {

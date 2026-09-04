@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = 'https://wexmtqqrvlnugqshvdwc.supabase.co';
@@ -10,6 +11,14 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     storage: AsyncStorage,       // persist session across app restarts
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,   // required for React Native (no URL scheme)
+    // On web, let the client pick the session out of the URL fragment
+    // (Supabase's redirect lands the browser back on the PWA origin
+    // with #access_token=...&refresh_token=... in the hash, and we want
+    // the client to set the session automatically).
+    //
+    // On native, detectSessionInUrl: false is required because there's
+    // no URL scheme; AppNavigator's deep-link handler sets the session
+    // manually using the tokens it parses out of the URL.
+    detectSessionInUrl: Platform.OS === 'web',
   },
 });

@@ -2,19 +2,59 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, Modal, Alert, ActivityIndicator, Image,
-  ScrollView, KeyboardAvoidingView, Platform, RefreshControl, Keyboard, Animated,
-} from 'react-native';
+  TextInput, Modal, Alert, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform, RefreshControl, Animated,
+  Dimensions} from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { getSession } from '../auth/session';
-import { pickAndUploadPhoto, pickPhotoAsset, uploadPhotoAsset } from '../supabase/storage';
+import { pickAndUploadPhoto, pickImageAsset, pickVideoAsset, pickAudioAsset, pickFileAsset, uploadPhotoAsset } from '../supabase/storage';
 import { deletePost, canDeletePost } from '../services/posts';
 import { getPlaceholderUrl } from '../utils/placeholders';
-import { sendPostNotification } from '../utils/notifications';
+import { sendPostNotification, sendMentionNotification } from '../utils/notifications';
+import AttachmentSheet from '../components/AttachmentSheet';
+import GiphyPicker from '../components/GiphyPicker';
+import { GIPHY_CONTENT_TYPES } from '../services/giphy';
+import { SkeletonCircleCard, SkeletonFeed, SkeletonPost, SkeletonSearchResult } from '../components/Skeleton';
+import MentionText from '../components/MentionText';
+import { extractMentionUsernames, getActiveMentionQuery } from '../utils/mentions';
+
+const { width: W } = Dimensions.get('window');
+
+function isVideoUrl(url) {
+  if (!url) return false;
+  return /\.(mp4|mov|m4v|webm)(\?|$)/i.test(url);
+}
+
+// Replaces the old `<Video>` component from expo-av. expo-video's API is
+// hook-based: you create a player with useVideoPlayer(source), then hand
+// the player to <VideoView>. The setup callback runs once when the
+// player is created; we set loop=false so a video doesn't restart on its
+// own when the user pauses. nativeControls + resizeMode behave the same
+// as the old `useNativeControls` / `resizeMode` props.
+function CircleVideo({ uri, style, resizeMode = 'contain' }) {
+  const player = useVideoPlayer({ uri }, (p) => {
+    p.loop = false;
+  });
+  return (
+    <VideoView
+      player={player}
+      style={style}
+      nativeControls
+      contentFit={resizeMode}
+      allowsFullscreen
+      allowsPictureInPicture
+    />
+  );
+}
+
+function isAudioUrl(url) {
+  if (!url) return false;
+  return /\.(m4a|mp3|wav|aac|caf)(\?|$)/i.test(url);
+}
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -204,7 +244,7 @@ function ManageMembersModal({ visible, onClose, circleId, circleName, isOwner, m
           </View>
 
           {loading ? (
-            <ActivityIndicator color={colors.ember} style={{ margin: 40 }} />
+            <SkeletonFeed itemCount={4} ItemComponent={SkeletonSearchResult} style={{ paddingHorizontal: 24 }} />
           ) : tab === 'members' ? (
             <FlatList
               data={members}
@@ -299,7 +339,7 @@ function ManageMembersModal({ visible, onClose, circleId, circleName, isOwner, m
 }
 
 // ── Circle Detail ─────────────────────────────────────────────────────────────
-function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }) {
+function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated, onOpenProfile }) {
   const styles = getStyles(colors);
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -307,16 +347,18 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
   const [myRole, setMyRole] = useState(null);
   const [joining, setJoining] = useState(false);
   const [newPost, setNewPost] = useState('');
-  const [postImagePreview, setPostImagePreview] = useState(null);
-  const [newPostImage, setNewPostImage] = useState(null);
-  const [imageUploading, setImageUploading] = useState(false);
+  const [postMediaPreview, setPostMediaPreview] = useState(null);
+  const [postMediaKind, setPostMediaKind] = useState(null);
+  const [newPostMedia, setNewPostMedia] = useState(null);
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
+  const [giphyPickerVisible, setGiphyPickerVisible] = useState(false);
   const [posting, setPosting] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [leaveReason, setLeaveReason] = useState('');
   const [circleCover, setCircleCover] = useState(circle.cover_image_url ?? null);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
   const [joinAnswers, setJoinAnswers] = useState({});
@@ -325,14 +367,14 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
   const [showManagePrivacy, setShowManagePrivacy] = useState(false);
   const [editingPrivacy, setEditingPrivacy] = useState('public');
   const [savingRules, setSavingRules] = useState(false);
+  const [showEditCoverGifPicker, setShowEditCoverGifPicker] = useState(false);
+  const [showEditCoverSheet, setShowEditCoverSheet] = useState(false);
+  const [viewingPostImage, setViewingPostImage] = useState(null);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const [mentionableUsers, setMentionableUsers] = useState([]);
+  const postListRef = useRef(null);
   const color = CATEGORY_COLORS[circle.category] || colors.ember;
   const isOwner = circle.owner_id === myUid;
-
-  useEffect(() => {
-    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
-    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
 
   useEffect(() => {
     setCircleCover(circle.cover_image_url ?? null);
@@ -379,7 +421,10 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
           usersMap = Object.fromEntries((usersData ?? []).map((u) => [u.id, u]));
         }
 
-        setPosts(rows.map((p) => ({ ...p, users: usersMap[p.user_id] ?? null })));
+        // Chat-style: oldest at the top, newest at the bottom.
+        // The query is DESC, so reverse for display.
+        const ordered = rows.map((p) => ({ ...p, users: usersMap[p.user_id] ?? null })).reverse();
+        setPosts(ordered);
       }
 
       setIsMember(!!memberData || circle.owner_id === myUid);
@@ -393,6 +438,123 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
   }, [circle.id, circle.owner_id, myUid]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-scroll to bottom (newest post) when posts first load or when a
+  // new post is appended locally. Chat-style: users see the latest at the
+  // bottom of the screen.
+  useEffect(() => {
+    if (loading || posts.length === 0) return;
+    const t = setTimeout(() => {
+      postListRef.current?.scrollToEnd({ animated: false });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [loading, posts.length]);
+
+  useEffect(() => {
+    if (!circle?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: members, error: membersError } = await supabase
+          .from('circle_members')
+          .select('user_id')
+          .eq('circle_id', circle.id);
+        if (membersError) throw membersError;
+        const ids = [...new Set((members ?? [])
+          .map((m) => m.user_id)
+          .filter((id) => id && id !== myUid))];
+        if (ids.length === 0) {
+          if (!cancelled) setMentionableUsers([]);
+          return;
+        }
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, name, username, photo_urls')
+          .in('id', ids)
+          .not('username', 'is', null);
+        if (!cancelled) setMentionableUsers(users ?? []);
+      } catch (e) {
+        console.log('Circle mentionable users load error:', e?.message);
+        if (!cancelled) setMentionableUsers([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [circle?.id, myUid]);
+
+  const handleNewPostChange = (val) => {
+    setNewPost(val);
+    setMentionQuery(getActiveMentionQuery(val));
+  };
+
+  const insertMention = (user) => {
+    if (!mentionQuery || !user?.username) return;
+    const before = newPost.slice(0, mentionQuery.start);
+    const after = newPost.slice(mentionQuery.start + 1 + mentionQuery.query.length);
+    setNewPost(`${before}@${user.username} ${after}`);
+    setMentionQuery(null);
+  };
+
+  const mentionSuggestions = mentionQuery
+    ? mentionableUsers
+        .filter((u) => u.username?.toLowerCase().includes(mentionQuery.query.toLowerCase()))
+        .slice(0, 6)
+    : [];
+
+  const notifyMentions = async (txt, postId, myName) => {
+    const usernames = extractMentionUsernames(txt);
+    if (!usernames.length) return;
+    for (const username of usernames) {
+      const local = mentionableUsers.find(
+        (u) => u.username?.toLowerCase() === username.toLowerCase(),
+      );
+      let user = local;
+      if (!user) {
+        const { data } = await supabase
+          .from('users')
+          .select('id, name, username, photo_urls')
+          .eq('username', username)
+          .maybeSingle();
+        user = data || null;
+      }
+      if (!user || user.id === myUid) continue;
+      try {
+        await supabase.from('notifications').insert({
+          recipient_id: user.id,
+          sender_id: myUid,
+          post_id: postId,
+          circle_id: circle.id,
+          type: 'mention',
+          title: 'You were mentioned',
+          message: `${myName} mentioned you in ${circle.name}: "${txt.slice(0, 80)}"`,
+        });
+        await sendMentionNotification(user.id, myName, txt, { postId });
+      } catch (err) {
+        console.log('Error notifying mention:', err.message);
+      }
+    }
+  };
+
+  const handleMentionPress = async (username) => {
+    const clean = String(username || '').replace(/^@/, '').toLowerCase();
+    if (!clean) return;
+    const local = mentionableUsers.find(
+      (u) => u.username?.toLowerCase() === clean,
+    );
+    let user = local;
+    if (!user) {
+      const { data } = await supabase
+        .from('users')
+        .select('id, name, username, photo_urls')
+        .eq('username', clean)
+        .maybeSingle();
+      user = data || null;
+    }
+    if (user?.id) {
+      onOpenProfile?.(user);
+    } else {
+      Alert.alert('Not found', `@${clean} isn't a Cupid user.`);
+    }
+  };
 
   const processJoin = async (answers = {}) => {
     setJoining(true);
@@ -430,16 +592,17 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
     }
   };
 
-  const clearPostImage = () => {
-    setPostImagePreview(null);
-    setNewPostImage(null);
+  const clearPostMedia = () => {
+    setPostMediaPreview(null);
+    setPostMediaKind(null);
+    setNewPostMedia(null);
   };
 
   const submitPost = async () => {
-    if (!newPost.trim() && !newPostImage && !postImagePreview) return;
+    if (!newPost.trim() && !newPostMedia && !postMediaPreview) return;
 
-    if (postImagePreview && !newPostImage) {
-      Alert.alert('Please wait', 'Your image is still uploading. Try again in a moment.');
+    if (postMediaPreview && !newPostMedia) {
+      Alert.alert('Please wait', 'Your media is still uploading. Try again in a moment.');
       return;
     }
 
@@ -450,7 +613,7 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
         .insert({
           user_id: myUid,
           caption: newPost.trim() || null,
-          image_url: newPostImage || null,
+          image_url: newPostMedia || null,
           circle_id: circle.id,
           visibility: 'public',
         })
@@ -465,9 +628,16 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
         .eq('id', myUid)
         .maybeSingle();
 
-      setPosts((prev) => [{ ...data, users: me ?? null }, ...prev]);
+      setPosts((prev) => [...prev, { ...data, users: me ?? null }]);
+      const postedCaption = newPost.trim();
       setNewPost('');
-      clearPostImage();
+      setMentionQuery(null);
+      clearPostMedia();
+
+      // Fire mention notifications (non-blocking — failures are logged).
+      notifyMentions(postedCaption, data.id, me?.name || 'A member').catch((e) =>
+        console.log('Circle mention notify error:', e?.message),
+      );
 
       try {
         const { data: members } = await supabase
@@ -507,25 +677,88 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
     }
   };
 
-  const handlePickPostImage = async () => {
-    const asset = await pickPhotoAsset();
+  const uploadPickedAsset = async (asset, kind) => {
     if (!asset?.uri) return;
 
-    setPostImagePreview(asset.uri);
-    setNewPostImage(null);
-    setImageUploading(true);
+    setPostMediaPreview(asset.uri);
+    setPostMediaKind(kind);
+    setNewPostMedia(null);
+    setMediaUploading(true);
 
     try {
       const url = await uploadPhotoAsset(myUid, asset);
       if (url) {
-        setNewPostImage(url);
+        setNewPostMedia(url);
       } else {
-        setPostImagePreview(null);
-        Alert.alert('Upload failed', 'Could not upload this image. Please try again.');
+        clearPostMedia();
+        Alert.alert('Upload failed', 'Could not upload this file. Please try again.');
       }
     } finally {
-      setImageUploading(false);
+      setMediaUploading(false);
     }
+  };
+
+  const handlePickPostMedia = async (kind) => {
+    let asset = null;
+    if (kind === 'photo') asset = await pickImageAsset();
+    else if (kind === 'video') asset = await pickVideoAsset();
+    else if (kind === 'audio') asset = await pickAudioAsset();
+    else if (kind === 'file') asset = await pickFileAsset();
+
+    if (asset) await uploadPickedAsset(asset, kind);
+  };
+
+  const attachmentOptions = [
+    {
+      key: 'photo',
+      label: 'Photo',
+      icon: 'image',
+      iconColor: '#3b82f6',
+      bgColor: '#3b82f620',
+      onPress: () => handlePickPostMedia('photo'),
+    },
+    {
+      key: 'video',
+      label: 'Video',
+      icon: 'videocam',
+      iconColor: '#8b5cf6',
+      bgColor: '#8b5cf620',
+      onPress: () => handlePickPostMedia('video'),
+    },
+    {
+      key: 'audio',
+      label: 'Audio',
+      icon: 'musical-notes',
+      iconColor: '#f59e0b',
+      bgColor: '#f59e0b20',
+      onPress: () => handlePickPostMedia('audio'),
+    },
+    {
+      key: 'gif',
+      label: 'GIF',
+      icon: 'happy-outline',
+      iconColor: '#7c3aed',
+      bgColor: '#7c3aed20',
+      onPress: () => {
+        setShowAttachmentSheet(false);
+        setGiphyPickerVisible(true);
+      },
+    },
+    {
+      key: 'file',
+      label: 'File',
+      icon: 'document',
+      iconColor: colors.stone,
+      bgColor: colors.fog,
+      onPress: () => handlePickPostMedia('file'),
+    },
+  ];
+
+  const handleGiphySelect = (item) => {
+    setGiphyPickerVisible(false);
+    setPostMediaPreview(item.previewUrl || item.mediaUrl);
+    setPostMediaKind(item.type === GIPHY_CONTENT_TYPES.STICKER ? 'sticker' : 'gif');
+    setNewPostMedia(item.mediaUrl);
   };
 
   const canPost = isMember || isOwner;
@@ -550,13 +783,12 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
     ]);
   };
 
-  const handleEditCover = async () => {
-    const url = await pickAndUploadPhoto(myUid);
-    if (!url) return;
+  const persistCircleCover = async (nextUrl, sourceLabel) => {
+    if (!nextUrl) return;
 
     const { data, error } = await supabase
       .from('circles')
-      .update({ cover_image_url: url })
+      .update({ cover_image_url: nextUrl })
       .eq('id', circle.id)
       .select('id, cover_image_url')
       .maybeSingle();
@@ -569,14 +801,27 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
     if (!data?.cover_image_url) {
       Alert.alert(
         'Could not save cover',
-        'The photo uploaded but was not saved to this circle. If you are the owner or a moderator, run supabase_migration_circles_cover_update.sql in the Supabase SQL editor (missing UPDATE permission).'
+        'The file uploaded but was not saved to this circle. If you are the owner or a moderator, run supabase_migration_circles_cover_update.sql in the Supabase SQL editor (missing UPDATE permission).'
       );
       return;
     }
 
     setCircleCover(data.cover_image_url);
     onCircleUpdated?.({ ...circle, cover_image_url: data.cover_image_url });
-    Alert.alert('Success', 'Cover photo updated!');
+    Alert.alert('Success', `${sourceLabel} updated!`);
+  };
+
+  const handleEditCover = () => setShowEditCoverSheet(true);
+
+  const handleEditCoverPhoto = async () => {
+    const url = await pickAndUploadPhoto(myUid);
+    if (url) await persistCircleCover(url, 'Cover photo');
+    setShowEditCoverSheet(false);
+  };
+
+  const handleEditCoverGif = () => {
+    setShowEditCoverSheet(false);
+    setShowEditCoverGifPicker(true);
   };
 
   const handleManagePrivacy = () => {
@@ -629,7 +874,7 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
   return (
     <View style={{ flex: 1, backgroundColor: colors.snow }}>
       {circleCover ? (
-        <Image source={{ uri: circleCover }} style={styles.detailCover} resizeMode="cover" />
+        <Image source={{ uri: circleCover }} style={styles.detailCover} contentFit="cover" />
       ) : null}
       {/* Header */}
       <View style={[styles.detailHeader, { backgroundColor: colors.white, borderBottomColor: colors.fog }]}>
@@ -678,12 +923,33 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
         </TouchableOpacity>
       </View>
 
+      <AttachmentSheet
+        visible={showEditCoverSheet}
+        onClose={() => setShowEditCoverSheet(false)}
+        title="Add circle cover"
+        options={[
+          { key: 'image', label: 'Photo', icon: 'image-outline', iconColor: '#3b82f6', bgColor: '#3b82f620', onPress: handleEditCoverPhoto },
+          { key: 'gif', label: 'GIF', icon: 'sparkles-outline', iconColor: '#f59e0b', bgColor: '#f59e0b20', onPress: handleEditCoverGif },
+        ]}
+      />
+
+      <GiphyPicker
+        visible={showEditCoverGifPicker}
+        onClose={() => setShowEditCoverGifPicker(false)}
+        contentTypes={[GIPHY_CONTENT_TYPES.GIF]}
+        onSelect={(item) => {
+          setShowEditCoverGifPicker(false);
+          persistCircleCover(item.mediaUrl, 'Circle GIF cover');
+        }}
+      />
+
       <FlatList
+        ref={postListRef}
         data={posts}
         keyExtractor={i => i.id}
-        contentContainerStyle={{ padding: 16 }}
+        contentContainerStyle={styles.bubbleListContent}
         ListEmptyComponent={
-          loading ? <ActivityIndicator color={colors.ember} style={{ marginTop: 40 }} /> : (
+          loading ? <SkeletonFeed itemCount={3} ItemComponent={SkeletonPost} style={{ paddingHorizontal: 16 }} /> : (
             <View style={styles.emptyBox}>
               <Ionicons name="chatbubbles-outline" size={48} color={colors.ash} />
               <Text style={[styles.emptyText, { color: colors.stone }]}>No posts yet. Be the first!</Text>
@@ -698,66 +964,171 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
             isOwner ||
             myRole === 'moderator' ||
             myRole === 'owner';
+          const isMine = item.user_id === myUid;
+          // Chat-bubble palette: own messages use the circle's accent, others
+          // use a soft neutral. Text colors flip for contrast.
+          const bubbleBg = isMine ? color : colors.fog;
+          const bubbleText = isMine ? colors.white : colors.graphite;
+          const mentionColor = isMine ? colors.white : color;
+          const bubbleMaxWidth = '78%';
           return (
-            <View style={[styles.postCard, { backgroundColor: colors.white }, shadow.soft]}>
-              <View style={styles.postHeader}>
-                <View style={[styles.postAvatar, { backgroundColor: color + '33' }]}>
-                  {photo ? <Image source={{ uri: photo }} style={styles.postAvatarImg} /> : (
-                    <Image source={{ uri: getPlaceholderUrl(user?.name) }} style={styles.postAvatarImg} />
+            <View
+              style={[
+                styles.bubbleRow,
+                isMine ? styles.bubbleRowMine : styles.bubbleRowTheirs,
+              ]}
+            >
+              {!isMine && (
+                <View style={[styles.bubbleAvatar, { backgroundColor: color + '33' }]}>
+                  {photo ? (
+                    <Image source={{ uri: photo }} style={styles.bubbleAvatarImg} />
+                  ) : (
+                    <Image source={{ uri: getPlaceholderUrl(user?.name) }} style={styles.bubbleAvatarImg} />
                   )}
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.postAuthor, { color: colors.ink }]}>{user?.name || 'Cupid User'}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    {user?.username ? <Text style={[styles.postUsername, { color }]}>@{user.username}</Text> : null}
-                    <Text style={[styles.postTime, { color: colors.ash }]}>• {timeAgo(item.created_at)}</Text>
+              )}
+              <View style={{ maxWidth: bubbleMaxWidth, alignItems: isMine ? 'flex-end' : 'flex-start' }}>
+                {!isMine && (
+                  <View style={styles.bubbleMetaLeft}>
+                    <Text style={[styles.bubbleAuthor, { color: colors.ink }]} numberOfLines={1}>
+                      {user?.name || 'Cupid User'}
+                    </Text>
+                    {user?.username ? (
+                      <Text style={[styles.bubbleUsername, { color: colors.stone }]} numberOfLines={1}>
+                        @{user.username}
+                      </Text>
+                    ) : null}
                   </View>
-                </View>
-                {mayDelete && (
-                  <TouchableOpacity onPress={() => confirmDeletePost(item)} hitSlop={10} style={{ padding: 4 }}>
-                    <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                  </TouchableOpacity>
                 )}
+                <View
+                  style={[
+                    styles.bubble,
+                    isMine ? styles.bubbleMine : styles.bubbleTheirs,
+                    { backgroundColor: bubbleBg },
+                    shadow.soft,
+                  ]}
+                >
+                  {item.image_url ? (
+                    isVideoUrl(item.image_url) ? (
+                      <CircleVideo
+                        uri={item.image_url}
+                        style={styles.bubbleMedia}
+                        contentFit="contain"
+                      />
+                    ) : isAudioUrl(item.image_url) ? (
+                      <View style={styles.bubbleAudioRow}>
+                        <Ionicons name="musical-notes" size={18} color={isMine ? colors.white : color} />
+                        <Text style={[styles.bubbleAudioText, { color: bubbleText }]}>Audio attachment</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.bubbleMediaFrame}
+                        onPress={() => setViewingPostImage(item.image_url)}
+                        activeOpacity={0.9}
+                      >
+                        <Image source={{ uri: item.image_url }} style={styles.bubbleMedia} contentFit="cover" />
+                      </TouchableOpacity>
+                    )
+                  ) : null}
+                  {item.caption ? (
+                    <MentionText
+                      text={item.caption}
+                      style={[styles.bubbleText, { color: bubbleText }]}
+                      mentionStyle={{ color: mentionColor, fontWeight: '700' }}
+                      onMentionPress={handleMentionPress}
+                    />
+                  ) : null}
+                </View>
+                <View style={[styles.bubbleFooter, isMine ? styles.bubbleFooterMine : styles.bubbleFooterTheirs]}>
+                  <Text style={[styles.bubbleTime, { color: colors.ash }]}>{timeAgo(item.created_at)}</Text>
+                  {mayDelete && (
+                    <TouchableOpacity onPress={() => confirmDeletePost(item)} hitSlop={8} style={styles.bubbleDeleteBtn}>
+                      <Ionicons name="trash-outline" size={14} color={colors.ash} />
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
-              {item.image_url ? (
-                <Image source={{ uri: item.image_url }} style={styles.postImage} resizeMode="cover" />
-              ) : null}
-              {item.caption ? (
-                <Text style={[styles.postContent, { color: colors.graphite }]}>{item.caption}</Text>
-              ) : null}
+              {isMine && (
+                <View style={[styles.bubbleAvatar, { backgroundColor: color + '33' }]}>
+                  {photo ? (
+                    <Image source={{ uri: photo }} style={styles.bubbleAvatarImg} />
+                  ) : (
+                    <Image source={{ uri: getPlaceholderUrl(user?.name) }} style={styles.bubbleAvatarImg} />
+                  )}
+                </View>
+              )}
             </View>
           );
         }}
       />
 
+      <Modal
+        visible={!!viewingPostImage}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setViewingPostImage(null)}
+      >
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={() => setViewingPostImage(null)}
+            hitSlop={12}
+          >
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          {viewingPostImage ? (
+            <Image
+              source={{ uri: viewingPostImage }}
+              style={styles.imageViewerImage}
+              contentFit="contain"
+            />
+          ) : null}
+        </View>
+      </Modal>
+
       {/* Post input — members and circle owner */}
       {canPost && (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.inputBar, { backgroundColor: colors.white, borderTopColor: colors.fog, paddingBottom: 12 }]}>
-            {postImagePreview ? (
+            {postMediaPreview ? (
               <View style={styles.postImagePreviewWrapper}>
-                <Image source={{ uri: postImagePreview }} style={styles.postImagePreview} />
-                {imageUploading ? (
+                {postMediaKind === 'video' ? (
+                  <CircleVideo uri={postMediaPreview} style={styles.postImagePreview} contentFit="cover" />
+                ) : postMediaKind === 'audio' || postMediaKind === 'file' ? (
+                  <View style={styles.postMediaPlaceholder}>
+                    <Ionicons
+                      name={postMediaKind === 'audio' ? 'musical-notes' : 'document'}
+                      size={36}
+                      color={color}
+                    />
+                    <Text style={[styles.postMediaPlaceholderText, { color: colors.stone }]}>
+                      {postMediaKind === 'audio' ? 'Audio selected' : 'File selected'}
+                    </Text>
+                  </View>
+                ) : (
+                  <Image source={{ uri: postMediaPreview }} style={styles.postImagePreview} />
+                )}
+                {mediaUploading ? (
                   <View style={styles.postImageUploading}>
                     <ActivityIndicator color="#fff" />
                     <Text style={styles.postImageUploadingText}>Uploading…</Text>
                   </View>
                 ) : null}
-                <TouchableOpacity style={styles.postImageRemove} onPress={clearPostImage}>
+                <TouchableOpacity style={styles.postImageRemove} onPress={clearPostMedia}>
                   <Ionicons name="close-circle" size={26} color="#fff" />
                 </TouchableOpacity>
               </View>
             ) : null}
             <View style={styles.inputBarRow}>
-              <TouchableOpacity onPress={handlePickPostImage} style={styles.imageBtn} disabled={imageUploading}>
-                <Ionicons name="image" size={24} color={color} />
+              <TouchableOpacity onPress={() => setShowAttachmentSheet(true)} style={styles.addBtn} disabled={mediaUploading}>
+                <Ionicons name="add" size={28} color={color} />
               </TouchableOpacity>
               <TextInput
                 style={[styles.postInput, { color: colors.ink, backgroundColor: colors.snow }]}
                 placeholder="Share something..."
                 placeholderTextColor={colors.ash}
                 value={newPost}
-                onChangeText={setNewPost}
+                onChangeText={handleNewPostChange}
                 multiline
               />
               <TouchableOpacity
@@ -765,23 +1136,63 @@ function CircleDetail({ circle, myUid, colors, shadow, onBack, onCircleUpdated }
                   styles.sendBtn,
                   {
                     backgroundColor: color,
-                    opacity: (newPost.trim() || newPostImage || postImagePreview) ? 1 : 0.4,
+                    opacity: (newPost.trim() || newPostMedia || postMediaPreview) ? 1 : 0.4,
                   },
                 ]}
                 onPress={submitPost}
                 disabled={
                   posting ||
-                  imageUploading ||
-                  (!newPost.trim() && !newPostImage && !postImagePreview)
+                  mediaUploading ||
+                  (!newPost.trim() && !newPostMedia && !postMediaPreview)
                 }
               >
                 {posting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={18} color="#fff" />}
               </TouchableOpacity>
             </View>
+            {mentionSuggestions.length > 0 && (
+              <View style={[styles.mentionList, { backgroundColor: colors.white, borderColor: colors.fog }]}>
+                {mentionSuggestions.map((u) => (
+                  <TouchableOpacity
+                    key={u.id}
+                    style={[styles.mentionRow, { borderBottomColor: colors.fog }]}
+                    onPress={() => insertMention(u)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.mentionAvatar, { backgroundColor: colors.fog }]}>
+                      {u.photo_urls?.[0] ? (
+                        <Image source={{ uri: u.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                      ) : (
+                        <Image source={{ uri: getPlaceholderUrl(u.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.mentionName, { color: colors.ink }]} numberOfLines={1}>
+                        {u.name}
+                      </Text>
+                      <Text style={[styles.mentionUsername, { color: colors.stone }]} numberOfLines={1}>
+                        @{u.username}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
-          {!keyboardVisible && <View style={{ height: Platform.OS === 'ios' ? 120 : 100 }} />}
         </KeyboardAvoidingView>
       )}
+      <AttachmentSheet
+        visible={showAttachmentSheet}
+        onClose={() => setShowAttachmentSheet(false)}
+        title="Add to post"
+        options={attachmentOptions}
+      />
+      <GiphyPicker
+        visible={giphyPickerVisible}
+        onClose={() => setGiphyPickerVisible(false)}
+        onSelect={handleGiphySelect}
+        customerId={myUid}
+      />
+
       {/* Join prompt for non-members */}
       {!canPost && !loading && (
         <View style={[styles.joinPrompt, { backgroundColor: colors.white, borderTopColor: colors.fog }]}>
@@ -1080,6 +1491,8 @@ export default function CirclesScreen({ navigation }) {
   const [cCover, setCCover] = useState(null);
   const [cQuestions, setCQuestions] = useState([]);
   const [creating, setCreating] = useState(false);
+  const [showCircleCoverSheet, setShowCircleCoverSheet] = useState(false);
+  const [showCircleCoverGifPicker, setShowCircleCoverGifPicker] = useState(false);
 
   const resolveUid = async () => {
     // Primary: Supabase session. Fallback: Firebase session stored in AsyncStorage.
@@ -1151,9 +1564,17 @@ export default function CirclesScreen({ navigation }) {
     finally { setCreating(false); }
   };
 
-  const handlePickCover = async () => {
+  const handlePickCover = () => setShowCircleCoverSheet(true);
+
+  const handleAddCoverPhoto = async () => {
     const url = await pickAndUploadPhoto(myUid);
     if (url) setCCover(url);
+    setShowCircleCoverSheet(false);
+  };
+
+  const handleAddCoverGif = () => {
+    setShowCircleCoverSheet(false);
+    setShowCircleCoverGifPicker(true);
   };
 
   const displayed = circles.filter((circle) => {
@@ -1201,6 +1622,7 @@ export default function CirclesScreen({ navigation }) {
           setActiveCircle(null);
           load();
         }}
+        onOpenProfile={(u) => { if (u) navigation?.navigate('UserProfile', { userId: u.id }); }}
       />
     );
   }
@@ -1243,9 +1665,7 @@ export default function CirclesScreen({ navigation }) {
 
       {/* Circles list */}
       {loading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator color={colors.ember} size="large" />
-        </View>
+        <SkeletonFeed itemCount={3} ItemComponent={SkeletonCircleCard} style={{ paddingHorizontal: 16 }} />
       ) : (
         <FlatList
           data={displayed}
@@ -1273,6 +1693,16 @@ export default function CirclesScreen({ navigation }) {
       )}
 
       {/* Create Modal */}
+      <AttachmentSheet
+        visible={showCircleCoverSheet}
+        onClose={() => setShowCircleCoverSheet(false)}
+        title="Add circle cover"
+        options={[
+          { key: 'image', label: 'Photo', icon: 'image-outline', iconColor: '#3b82f6', bgColor: '#3b82f620', onPress: handleAddCoverPhoto },
+          { key: 'gif', label: 'GIF', icon: 'sparkles-outline', iconColor: '#f59e0b', bgColor: '#f59e0b20', onPress: handleAddCoverGif },
+        ]}
+      />
+
       <Modal visible={showCreate} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
@@ -1291,7 +1721,7 @@ export default function CirclesScreen({ navigation }) {
                   ) : null}
                   <TouchableOpacity style={styles.coverBtn} onPress={handlePickCover}>
                     <Ionicons name="camera" size={20} color={colors.ink} />
-                    <Text style={[styles.coverBtnText, { color: colors.ink }]}>{cCover ? 'Change Cover' : 'Add Cover Photo'}</Text>
+                    <Text style={[styles.coverBtnText, { color: colors.ink }]}>{cCover ? 'Change Cover' : 'Add Cover Photo or GIF'}</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -1424,6 +1854,16 @@ export default function CirclesScreen({ navigation }) {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+
+      <GiphyPicker
+        visible={showCircleCoverGifPicker}
+        onClose={() => setShowCircleCoverGifPicker(false)}
+        contentTypes={[GIPHY_CONTENT_TYPES.GIF]}
+        onSelect={(item) => {
+          setCCover(item.mediaUrl);
+          setShowCircleCoverGifPicker(false);
+        }}
+      />
     </View>
   );
 }
@@ -1492,7 +1932,11 @@ const getStyles = (colors) => StyleSheet.create({
   joinBtnText: { fontWeight: '800', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase' },
 
   postCard: { borderRadius: radius.md, padding: 14, marginBottom: 12 },
-  postImage: { width: '100%', height: 200, borderRadius: 8, marginVertical: 10 },
+  postImageFrame: { width: '100%', aspectRatio: 4 / 3, borderRadius: 8, marginVertical: 10, overflow: 'hidden', backgroundColor: colors.snow },
+  postImage: { width: '100%', height: '100%' },
+  imageViewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  imageViewerImage: { width: '100%', height: '82%' },
+  imageViewerClose: { position: 'absolute', top: 52, right: 20, zIndex: 2, width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.18)' },
   postHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
   postAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   postAvatarImg: { width: 36, height: 36 },
@@ -1501,9 +1945,78 @@ const getStyles = (colors) => StyleSheet.create({
   postTime: { fontSize: 10 },
   postContent: { fontSize: 14, lineHeight: 21 },
 
+  // ── Chat-bubble post layout ──
+  bubbleListContent: { padding: 12, paddingBottom: 24 },
+  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 10 },
+  bubbleRowMine: { justifyContent: 'flex-end' },
+  bubbleRowTheirs: { justifyContent: 'flex-start' },
+  bubbleAvatar: { width: 30, height: 30, borderRadius: 15, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  bubbleAvatarImg: { width: 30, height: 30 },
+  bubbleMetaLeft: { marginBottom: 4, marginLeft: 4 },
+  bubbleAuthor: { fontSize: 12, fontWeight: '700' },
+  bubbleUsername: { fontSize: 11, fontWeight: '500' },
+  bubble: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 18,
+    minWidth: 56,
+  },
+  bubbleMine: { borderBottomRightRadius: 4 },
+  bubbleTheirs: { borderBottomLeftRadius: 4 },
+  bubbleText: { fontSize: 14, lineHeight: 20 },
+  bubbleMediaFrame: {
+    width: 200,
+    aspectRatio: 4 / 3,
+    borderRadius: 12,
+    marginBottom: 8,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.06)',
+  },
+  bubbleMedia: { width: '100%', height: '100%' },
+  bubbleAudioRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 },
+  bubbleAudioText: { fontSize: 13, fontWeight: '600' },
+  bubbleFooter: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 },
+  bubbleFooterMine: { justifyContent: 'flex-end' },
+  bubbleFooterTheirs: { justifyContent: 'flex-start' },
+  bubbleTime: { fontSize: 10, fontWeight: '500' },
+  bubbleDeleteBtn: { padding: 2 },
+  mentionList: {
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  mentionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  mentionAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  mentionName: { fontSize: 13, fontWeight: '700' },
+  mentionUsername: { fontSize: 11 },
+
   inputBar: { padding: 12, borderTopWidth: 1 },
   inputBarRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
-  imageBtn: { padding: 8, justifyContent: 'center', alignItems: 'center' },
+  addBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  postAudioRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.04)', marginVertical: 10,
+  },
+  postAudioText: { fontSize: 14, fontWeight: '600' },
+  postMediaPlaceholder: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.04)',
+  },
+  postMediaPlaceholderText: { fontSize: 13, fontWeight: '600' },
   postImagePreviewWrapper: {
     position: 'relative',
     width: '100%',

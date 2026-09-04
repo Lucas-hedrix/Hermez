@@ -2,26 +2,66 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView,
-  Image, TextInput, ActivityIndicator, Modal, KeyboardAvoidingView,
-  Platform, Dimensions, Alert, RefreshControl, TouchableWithoutFeedback,
-} from 'react-native';
+  TextInput, ActivityIndicator, Modal, KeyboardAvoidingView,
+  Platform, Dimensions, Alert, RefreshControl, TouchableWithoutFeedback, Image as RNImage} from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { Animated as RNAnimated } from 'react-native';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { pickAndUploadPhoto } from '../supabase/storage';
-import AnimatedSparkles from '../components/AnimatedSparkles';
 import SparkBurst from '../components/SparkBurst';
+import { SkeletonActivityItem, SkeletonFeed, SkeletonPost, SkeletonSearchResult } from '../components/Skeleton';
 import { deletePost, canDeletePost } from '../services/posts';
 import { getPlaceholderUrl } from '../utils/placeholders';
 import { sendPostNotification } from '../utils/notifications';
 import { POST_TYPES, getPostType, DEFAULT_POST_TYPE } from '../constants/postTypes';
 import { isVibeExpired } from '../constants/vibes';
+import MentionText from '../components/MentionText';
+import { extractMentionUsernames, getActiveMentionQuery } from '../utils/mentions';
+import AttachmentSheet from '../components/AttachmentSheet';
+import GiphyPicker from '../components/GiphyPicker';
+import { GIPHY_CONTENT_TYPES, trackGiphyAction } from '../services/giphy';
 
 
 const { width: W } = Dimensions.get('window');
+const FEED_IMAGE_MAX_HEIGHT = Math.round(W * 1.25);
+
+/** Full-width feed image that keeps the source aspect ratio without cropping. */
+function FeedMediaImage({ uri, style, maxHeight = FEED_IMAGE_MAX_HEIGHT }) {
+  const [ratio, setRatio] = useState(4 / 5);
+
+  useEffect(() => {
+    if (!uri) return;
+    let alive = true;
+    RNImage.getSize(
+      uri,
+      (w, h) => {
+        if (!alive || !w || !h) return;
+        const next = w / h;
+        const heightAtFullWidth = W / next;
+        if (heightAtFullWidth > maxHeight) {
+          setRatio(W / maxHeight);
+        } else {
+          setRatio(next);
+        }
+      },
+      () => { if (alive) setRatio(4 / 5); },
+    );
+    return () => { alive = false; };
+  }, [uri, maxHeight]);
+
+  return (
+    <ExpoImage
+      source={{ uri }}
+      style={[{ width: '100%', aspectRatio: ratio, backgroundColor: 'transparent' }, style]}
+      contentFit="contain"
+    />
+  );
+}
 
 function timeAgo(dateStr) {
   const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000);
@@ -31,7 +71,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function PostCard({ post, myUid, myVibe, onOpenComments, onOpenShare, onOpenProfile, onDelete, canDelete, onLike, onSpark, onOpenLikes }) {
+function PostCard({ post, myUid, myVibe, onOpenComments, onOpenShare, onOpenProfile, onOpenImage, onDelete, canDelete, onLike, onSpark, onOpenLikes }) {
   const { colors, shadow, isDark } = useTheme();
   const pc = getPcStyles(colors, isDark);
 
@@ -120,8 +160,6 @@ function PostCard({ post, myUid, myVibe, onOpenComments, onOpenShare, onOpenProf
 
   return (
     <View style={[pc.card, shadow.soft]}>
-      {/* Type rail — vertical brand accent, not a timeline top bar */}
-      <View style={[pc.typeRail, { backgroundColor: type.color }]} />
 
       <View style={pc.cardInner}>
         {/* Header: author + type badge */}
@@ -130,8 +168,8 @@ function PostCard({ post, myUid, myVibe, onOpenComments, onOpenShare, onOpenProf
             <View style={[pc.avatarRing, { borderColor: type.color + '66' }]}>
               <View style={[pc.avatar, { backgroundColor: colors.emberLight }]}>
                 {post.users?.photo_urls?.[0]
-                  ? <Image source={{ uri: post.users.photo_urls[0] }} style={StyleSheet.absoluteFillObject} />
-                  : <Image source={{ uri: getPlaceholderUrl(post.users?.name) }} style={StyleSheet.absoluteFillObject} />}
+                  ? <ExpoImage source={{ uri: post.users.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
+                  : <ExpoImage source={{ uri: getPlaceholderUrl(post.users?.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />}
               </View>
             </View>
             <View style={pc.authorMeta}>
@@ -175,19 +213,25 @@ function PostCard({ post, myUid, myVibe, onOpenComments, onOpenShare, onOpenProf
         <TouchableWithoutFeedback onPress={handleDoubleTap}>
           <View>
             {hasImage && (
-              <View style={[pc.mediaFrame, { marginBottom: hasCaption ? 12 : 12 }]}>
-                <Image source={{ uri: post.image_url }} style={pc.postImage} resizeMode="cover" />
-              </View>
+              <TouchableOpacity
+                style={[pc.mediaFrame, { marginBottom: hasCaption ? 12 : 12 }]}
+                onPress={() => onOpenImage?.(post.image_url)}
+                activeOpacity={0.9}
+              >
+                <FeedMediaImage uri={post.image_url} style={pc.postImage} />
+              </TouchableOpacity>
             )}
 
             {hasCaption && (
-              <Text style={[
-                pc.caption, 
-                !hasImage && pc.captionFeatured,
-                type.id === 'hot_take' && pc.captionHotTake
-              ]}>
-                {post.caption}
-              </Text>
+              <MentionText
+                text={post.caption}
+                style={[
+                  pc.caption,
+                  !hasImage && pc.captionFeatured,
+                  type.id === 'hot_take' && pc.captionHotTake,
+                ]}
+                mentionStyle={{ color: colors.ember, fontWeight: '700' }}
+              />
             )}
 
             {type.id === 'question' && (
@@ -229,61 +273,32 @@ function PostCard({ post, myUid, myVibe, onOpenComments, onOpenShare, onOpenProf
         {/* Engagement toolbar — equal pills, not a timeline icon row */}
         <View style={pc.actions}>
           <View style={[pc.actionPill, optimisticLiked && pc.actionPillLiked]}>
-            <TouchableOpacity
-              style={pc.actionPillHit}
-              onPress={toggleLike}
-              activeOpacity={0.75}
-              hitSlop={4}
-            >
+            <TouchableOpacity style={pc.actionPillHit} onPress={toggleLike} activeOpacity={0.75} hitSlop={4}>
               <Ionicons
                 name={optimisticLiked ? 'heart' : 'heart-outline'}
                 size={16}
                 color={optimisticLiked ? colors.ember : colors.stone}
               />
-              {optimisticCount === 0 && (
-                <Text style={[pc.actionPillLabel, optimisticLiked && { color: colors.ember }]}>
-                  Like
-                </Text>
-              )}
+              {optimisticCount === 0 && <Text style={[pc.actionPillLabel, optimisticLiked && { color: colors.ember }]}>Like</Text>}
             </TouchableOpacity>
             {optimisticCount > 0 && (
               <TouchableOpacity onPress={() => onOpenLikes(post)} hitSlop={6} activeOpacity={0.7}>
-                <Text style={[pc.actionPillLabel, optimisticLiked && { color: colors.ember }]}>
-                  {optimisticCount}
-                </Text>
+                <Text style={[pc.actionPillLabel, optimisticLiked && { color: colors.ember }]}>{optimisticCount}</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          <TouchableOpacity
-            style={pc.actionPill}
-            onPress={() => onOpenComments(post)}
-            activeOpacity={0.75}
-          >
+          <TouchableOpacity style={pc.actionPill} onPress={() => onOpenComments(post)} activeOpacity={0.75}>
             <Ionicons name="chatbubble-ellipses-outline" size={15} color={colors.stone} />
-            <Text style={pc.actionPillLabel}>
-              {(post.comments_count || 0) > 0 ? post.comments_count : 'Talk'}
-            </Text>
+            <Text style={pc.actionPillLabel}>{(post.comments_count || 0) > 0 ? post.comments_count : 'Talk'}</Text>
           </TouchableOpacity>
 
           <View style={pc.sparkWrap}>
-            <TouchableOpacity
-              style={[pc.actionPill, optimisticSparked && pc.actionPillSparked]}
-              onPress={toggleSpark}
-              activeOpacity={0.75}
-            >
-              <Ionicons
-                name={optimisticSparked ? 'sparkles' : 'sparkles-outline'}
-                size={15}
-                color={optimisticSparked ? colors.gold : colors.stone}
-              />
-              <Text style={[pc.actionPillLabel, optimisticSparked && { color: colors.gold }]}>
-                {optimisticSparkCount > 0 ? optimisticSparkCount : 'Spark'}
-              </Text>
+            <TouchableOpacity style={[pc.actionPill, optimisticSparked && pc.actionPillSparked]} onPress={toggleSpark} activeOpacity={0.75}>
+              <Ionicons name={optimisticSparked ? 'sparkles' : 'sparkles-outline'} size={15} color={optimisticSparked ? colors.gold : colors.stone} />
+              <Text style={[pc.actionPillLabel, optimisticSparked && { color: colors.gold }]}>{optimisticSparkCount > 0 ? optimisticSparkCount : 'Spark'}</Text>
             </TouchableOpacity>
-            <View style={StyleSheet.absoluteFill} pointerEvents="none">
-              <SparkBurst trigger={burst} color={colors.gold} />
-            </View>
+            <View style={StyleSheet.absoluteFill} pointerEvents="none"><SparkBurst trigger={burst} color={colors.gold} /></View>
           </View>
 
           <TouchableOpacity style={pc.shareBtn} onPress={() => onOpenShare(post)} hitSlop={8}>
@@ -315,12 +330,8 @@ const getPcStyles = (colors, isDark) => StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: isDark ? 'rgba(255,255,255,0.06)' : colors.fog,
-    flexDirection: 'row',
   },
-  typeRail: {
-    width: 4,
-    alignSelf: 'stretch',
-  },
+
   cardInner: {
     flex: 1,
     paddingTop: 14,
@@ -453,10 +464,30 @@ const getPcStyles = (colors, isDark) => StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 12,
     backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.fog,
+    width: '100%',
   },
   postImage: {
     width: '100%',
-    height: 260,
+  },
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  imageViewerImage: { width: '100%', height: '82%' },
+  imageViewerClose: {
+    position: 'absolute',
+    top: 52,
+    right: 20,
+    zIndex: 2,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
   },
 
   // Social proof
@@ -564,15 +595,90 @@ function CreatePostModal({ visible, onClose, onCreated, myUid }) {
   const [postType,  setPostType]  = useState(DEFAULT_POST_TYPE.id);
   const [uploading, setUploading] = useState(false);
   const [posting,   setPosting]   = useState(false);
+  const [mentionFriends, setMentionFriends] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState(null);
 
   const activeType = getPostType(postType);
 
-  const reset = () => { setCaption(''); setImageUri(null); setVisibility('public'); setPostType(DEFAULT_POST_TYPE.id); };
+  const reset = () => {
+    setCaption('');
+    setImageUri(null);
+    setVisibility('public');
+    setPostType(DEFAULT_POST_TYPE.id);
+    setMentionQuery(null);
+  };
+
+  useEffect(() => {
+    if (!visible || !myUid) return;
+    (async () => {
+      const { data: friendships } = await supabase
+        .from('friendships')
+        .select('requester_id, recipient_id')
+        .eq('status', 'accepted')
+        .or(`requester_id.eq.${myUid},recipient_id.eq.${myUid}`);
+      const friendIds = (friendships ?? []).map((f) =>
+        f.requester_id === myUid ? f.recipient_id : f.requester_id,
+      );
+      if (friendIds.length === 0) {
+        setMentionFriends([]);
+        return;
+      }
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, name, username, photo_urls')
+        .in('id', friendIds)
+        .not('username', 'is', null);
+      setMentionFriends(users ?? []);
+    })();
+  }, [visible, myUid]);
+
+  const handleCaptionChange = (val) => {
+    setCaption(val);
+    setMentionQuery(getActiveMentionQuery(val));
+  };
+
+  const insertMention = (user) => {
+    if (!mentionQuery || !user?.username) return;
+    const before = caption.slice(0, mentionQuery.start);
+    const after = caption.slice(mentionQuery.start + 1 + mentionQuery.query.length);
+    setCaption(`${before}@${user.username} ${after}`);
+    setMentionQuery(null);
+  };
+
+  const mentionSuggestions = mentionQuery
+    ? mentionFriends.filter((f) =>
+        f.username?.toLowerCase().includes(mentionQuery.query.toLowerCase()),
+      ).slice(0, 6)
+    : [];
+
+  const notifyMentions = async (txt, myName, postId) => {
+    const usernames = extractMentionUsernames(txt);
+    if (!usernames.length) return;
+    const { sendMentionNotification } = await import('../utils/notifications');
+
+    for (const username of usernames) {
+      const user = mentionFriends.find((f) => f.username?.toLowerCase() === username);
+      if (!user || user.id === myUid) continue;
+      try {
+        await supabase.from('notifications').insert({
+          recipient_id: user.id,
+          sender_id: myUid,
+          post_id: postId,
+          type: 'mention',
+          title: 'You were mentioned',
+          message: `${myName} mentioned you: "${txt.slice(0, 80)}"`,
+        });
+        await sendMentionNotification(user.id, myName, txt, { postId });
+      } catch (err) {
+        console.log('Error notifying mention:', err.message);
+      }
+    }
+  };
 
   const handlePickImage = async () => {
     try {
       setUploading(true);
-      const url = await pickAndUploadPhoto(myUid);
+      const url = await pickAndUploadPhoto(myUid, { freeAspect: true });
       if (url) setImageUri(url);
     } catch (e) {
       Alert.alert('Error', e.message);
@@ -588,14 +694,14 @@ function CreatePostModal({ visible, onClose, onCreated, myUid }) {
     }
     try {
       setPosting(true);
-      const { error } = await supabase.from('posts').insert({
+      const { data: newPost, error } = await supabase.from('posts').insert({
         user_id:   myUid,
         caption:   caption.trim() || null,
         image_url: imageUri || null,
         post_type: postType,
         visibility,
         circle_id: null,
-      });
+      }).select().single();
       if (error) throw error;
 
       try {
@@ -604,25 +710,30 @@ function CreatePostModal({ visible, onClose, onCreated, myUid }) {
           .eq('status', 'accepted')
           .or(`requester_id.eq.${myUid},recipient_id.eq.${myUid}`);
 
+        const { data: myData } = await supabase.from('users').select('name').eq('id', myUid).single();
+        const myName = myData?.name || 'A friend';
+
+        if (caption.trim()) {
+          await notifyMentions(caption.trim(), myName, newPost.id);
+        }
+
         if (friends && friends.length > 0) {
-          const { data: myData } = await supabase.from('users').select('name').eq('id', myUid).single();
-          const myName = myData?.name || 'A friend';
-          
           const notifs = friends.map(f => {
             const friendId = f.requester_id === myUid ? f.recipient_id : f.requester_id;
             return {
               recipient_id: friendId,
               sender_id: myUid,
-              type: 'update',
+              post_id: newPost.id,
+              type: 'post',
               title: 'New Post!',
-              message: `${myName} just made a new post.`
+              message: `${myName} just made a new post.`,
             };
           });
 
           if (notifs.length > 0) {
             await supabase.from('notifications').insert(notifs);
             const friendIds = notifs.map(n => n.recipient_id);
-            await sendPostNotification(friendIds, myName, null);
+            await sendPostNotification(friendIds, myName, null, newPost.id);
           }
         }
       } catch (e) {
@@ -679,7 +790,7 @@ function CreatePostModal({ visible, onClose, onCreated, myUid }) {
 
         {imageUri && (
           <View style={cm.imagePreviewWrap}>
-            <Image source={{ uri: imageUri }} style={cm.imagePreview} resizeMode="cover" />
+            <FeedMediaImage uri={imageUri} style={cm.imagePreview} maxHeight={320} />
             <TouchableOpacity style={cm.removeImage} onPress={() => setImageUri(null)}>
               <Ionicons name="close" size={14} color={colors.white} />
             </TouchableOpacity>
@@ -692,11 +803,51 @@ function CreatePostModal({ visible, onClose, onCreated, myUid }) {
           placeholderTextColor={colors.ash}
           multiline
           value={caption}
-          onChangeText={setCaption}
+          onChangeText={handleCaptionChange}
           maxLength={500}
           autoFocus
         />
         <Text style={cm.charCount}>{caption.length}/500</Text>
+
+        {mentionSuggestions.length > 0 ? (
+          <View style={cm.mentionList}>
+            {mentionSuggestions.map((f) => (
+              <TouchableOpacity key={f.id} style={cm.mentionRow} onPress={() => insertMention(f)}>
+                <View style={cm.mentionAvatar}>
+                  {f.photo_urls?.[0] ? (
+                    <ExpoImage source={{ uri: f.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                  ) : (
+                    <ExpoImage source={{ uri: getPlaceholderUrl(f.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                  )}
+                </View>
+                <View>
+                  <Text style={cm.mentionName}>{f.name}</Text>
+
+              <Modal
+                visible={!!viewingImage}
+                animationType="fade"
+                transparent
+                onRequestClose={() => setViewingImage(null)}
+              >
+                <View style={pc.imageViewerOverlay}>
+                  <TouchableOpacity
+                    style={pc.imageViewerClose}
+                    onPress={() => setViewingImage(null)}
+                    hitSlop={12}
+                  >
+                    <Ionicons name="close" size={28} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  {viewingImage ? (
+                    <ExpoImage source={{ uri: viewingImage }} style={pc.imageViewerImage} contentFit="contain" />
+                  ) : null}
+                </View>
+              </Modal>
+                  <Text style={cm.mentionUsername}>@{f.username}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
 
         <View style={cm.toolbar}>
           <TouchableOpacity style={cm.toolBtn} onPress={handlePickImage} disabled={uploading}>
@@ -739,7 +890,7 @@ const getCmStyles = (colors) => StyleSheet.create({
   },
   typePillText:  { fontSize: 13, fontWeight: '700', color: colors.stone },
   imagePreviewWrap:{ position: 'relative', marginHorizontal: 20, marginTop: 16, borderRadius: radius.lg, overflow: 'hidden' },
-  imagePreview:    { width: '100%', height: 220 },
+  imagePreview:    { width: '100%' },
   removeImage: {
     position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14,
     backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center',
@@ -753,112 +904,490 @@ const getCmStyles = (colors) => StyleSheet.create({
   },
   toolBtn:   { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.full, backgroundColor: colors.snow },
   toolLabel: { fontSize: 14, color: colors.graphite, fontWeight: '500' },
+  mentionList: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.fog,
+    backgroundColor: colors.snow,
+    overflow: 'hidden',
+  },
+  mentionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderBottomWidth: 1, borderBottomColor: colors.fog },
+  mentionAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.fog, overflow: 'hidden' },
+  mentionName: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  mentionUsername: { fontSize: 12, color: colors.ember },
 });
 
 // ── Comment Modal ────────────────────────────────────────────────────────────
-function CommentModal({ visible, onClose, post, myUid }) {
+function CommentModal({ visible, onClose, post, myUid, highlightCommentId }) {
   const { colors, shadow, isDark } = useTheme();
-  const s = getStyles(colors, shadow, isDark);
   const modals = getModalsStyles(colors);
   const [comments, setComments] = useState([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [attachmentSheetVisible, setAttachmentSheetVisible] = useState(false);
+  const [giphyPickerVisible, setGiphyPickerVisible] = useState(false);
+  const [mentionFriends, setMentionFriends] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  const glowAnim = useRef(new RNAnimated.Value(0)).current;
+  const [isFocused, setIsFocused] = useState(false);
+
+  const startGlow = () => {
+    RNAnimated.timing(glowAnim, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const stopGlow = () => {
+    RNAnimated.timing(glowAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const glowBorderColor = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.fog, colors.ember],
+  });
+
+  const glowBorderWidth = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 2.5],
+  });
+
+  const glowShadow = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 8],
+  });
+
+  const glowShadowOpacity = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 0.35],
+  });
+
+  useEffect(() => {
+    if (text.trim() || replyingTo) {
+      startGlow();
+    } else if (!isFocused) {
+      stopGlow();
+    }
+  }, [text, replyingTo]);
+
+  useEffect(() => {
+    if (!visible) {
+      setReplyingTo(null);
+      setText('');
+      setMentionQuery(null);
+      setSelectedMedia(null);
+      setAttachmentSheetVisible(false);
+      setGiphyPickerVisible(false);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !myUid) return;
+    (async () => {
+      const { data: friendships } = await supabase
+        .from('friendships')
+        .select('requester_id, recipient_id')
+        .eq('status', 'accepted')
+        .or(`requester_id.eq.${myUid},recipient_id.eq.${myUid}`);
+      const friendIds = (friendships ?? []).map((f) =>
+        f.requester_id === myUid ? f.recipient_id : f.requester_id,
+      );
+      if (friendIds.length === 0) {
+        setMentionFriends([]);
+        return;
+      }
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, name, username, photo_urls')
+        .in('id', friendIds)
+        .not('username', 'is', null);
+      setMentionFriends(users ?? []);
+    })();
+  }, [visible, myUid]);
+
+  useEffect(() => {
+    if (!highlightCommentId || loading || !comments.length) return;
+    const index = comments.findIndex((c) => c.id === highlightCommentId);
+    if (index >= 0) {
+      setTimeout(() => {
+        listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      }, 350);
+    }
+  }, [highlightCommentId, comments, loading]);
+
+  const sortNewestFirst = (rows) =>
+    [...rows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const enrichComments = async (rows) => {
+    if (!rows?.length) return [];
+    const userIds = [...new Set(rows.map((c) => c.user_id))];
+    const { data: usersData } = await supabase
+      .from('users')
+      .select('id, name, photo_urls')
+      .in('id', userIds);
+    const usersMap = new Map((usersData ?? []).map((u) => [u.id, u]));
+    return rows.map((c) => ({ ...c, users: usersMap.get(c.user_id) }));
+  };
 
   useEffect(() => {
     if (!visible || !post?.id) return;
     let channel;
     (async () => {
       setLoading(true);
-      const { data: commentsData } = await supabase.from('post_comments')
+      const { data: commentsData } = await supabase
+        .from('post_comments')
         .select('*')
         .eq('post_id', post.id)
-        .order('created_at', { ascending: true });
-        
-      if (commentsData && commentsData.length > 0) {
-        const userIds = [...new Set(commentsData.map(c => c.user_id))];
-        const { data: usersData } = await supabase.from('users').select('id, name, photo_urls').in('id', userIds);
-        const usersMap = new Map((usersData ?? []).map(u => [u.id, u]));
-        setComments(commentsData.map(c => ({ ...c, users: usersMap.get(c.user_id) })));
-      } else {
-        setComments([]);
-      }
+        .order('created_at', { ascending: false });
+
+      setComments(await enrichComments(commentsData ?? []));
       setLoading(false);
 
-      channel = supabase.channel(`comments:${post.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'post_comments', filter: `post_id=eq.${post.id}` }, async (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const { data: u } = await supabase.from('users').select('name, photo_urls').eq('id', payload.new.user_id).single();
-            setComments(prev => {
-              if (prev.some(c => c.id === payload.new.id)) return prev;
-              const filtered = prev.filter(c => !(c.isOptimistic && c.text === payload.new.text && c.user_id === payload.new.user_id));
-              return [...filtered, { ...payload.new, users: u }];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            setComments(prev => prev.map(c => c.id === payload.new.id ? { ...c, likes: payload.new.likes } : c));
-          } else if (payload.eventType === 'DELETE') {
-            setComments(prev => prev.filter(c => c.id !== payload.old.id));
-          }
-        }).subscribe();
+      channel = supabase
+        .channel(`comments:${post.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'post_comments', filter: `post_id=eq.${post.id}` },
+          async (payload) => {
+            if (payload.eventType === 'INSERT') {
+              const { data: u } = await supabase
+                .from('users')
+                .select('name, photo_urls')
+                .eq('id', payload.new.user_id)
+                .single();
+              setComments((prev) => {
+                if (prev.some((c) => c.id === payload.new.id)) return prev;
+                const filtered = prev.filter(
+                  (c) => !(c.isOptimistic && c.text === payload.new.text && c.user_id === payload.new.user_id),
+                );
+                return sortNewestFirst([{ ...payload.new, users: u }, ...filtered]);
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              setComments((prev) =>
+                prev.map((c) => (c.id === payload.new.id ? { ...c, ...payload.new } : c)),
+              );
+            } else if (payload.eventType === 'DELETE') {
+              setComments((prev) => prev.filter((c) => c.id !== payload.old.id));
+            }
+          },
+        )
+        .subscribe();
     })();
     return () => { if (channel) supabase.removeChannel(channel); };
   }, [visible, post?.id]);
 
+  const notifyUser = async (recipientId, myName, snippet, { isReply = false, commentId = null } = {}) => {
+    if (!recipientId || recipientId === myUid) return;
+    try {
+      await supabase.from('notifications').insert({
+        recipient_id: recipientId,
+        sender_id: myUid,
+        post_id: post.id,
+        comment_id: commentId,
+        type: 'comment',
+        title: isReply ? 'New Reply' : 'New Comment!',
+        message: isReply
+          ? `${myName} replied: "${snippet}"`
+          : `${myName} commented: "${snippet}"`,
+      });
+      const { sendCommentNotification } = await import('../utils/notifications');
+      await sendCommentNotification(recipientId, myName, snippet, {
+        postId: post.id,
+        commentId,
+      });
+    } catch (err) {
+      console.log('Error notifying comment:', err.message);
+    }
+  };
+
+  const notifyMentions = async (txt, myName, commentId) => {
+    const usernames = extractMentionUsernames(txt);
+    if (!usernames.length) return;
+    const { sendMentionNotification } = await import('../utils/notifications');
+
+    for (const username of usernames) {
+      const user = mentionFriends.find((f) => f.username?.toLowerCase() === username);
+      if (!user || user.id === myUid) continue;
+      try {
+        await supabase.from('notifications').insert({
+          recipient_id: user.id,
+          sender_id: myUid,
+          post_id: post.id,
+          comment_id: commentId,
+          type: 'mention',
+          title: 'You were mentioned',
+          message: `${myName} mentioned you: "${txt.slice(0, 80)}"`,
+        });
+        await sendMentionNotification(user.id, myName, txt, {
+          postId: post.id,
+          commentId,
+        });
+      } catch (err) {
+        console.log('Error notifying mention:', err.message);
+      }
+    }
+  };
+
+  const handleTextChange = (val) => {
+    setText(val);
+    const active = getActiveMentionQuery(val);
+    setMentionQuery(active);
+  };
+
+  const insertMention = (user) => {
+    if (!mentionQuery || !user?.username) return;
+    const before = text.slice(0, mentionQuery.start);
+    const after = text.slice(mentionQuery.start + 1 + mentionQuery.query.length);
+    setText(`${before}@${user.username} ${after}`);
+    setMentionQuery(null);
+    inputRef.current?.focus();
+  };
+
+  const mentionSuggestions = mentionQuery
+    ? mentionFriends.filter((f) =>
+        f.username?.toLowerCase().includes(mentionQuery.query.toLowerCase()),
+      ).slice(0, 6)
+    : [];
+
   const handleSend = async () => {
-    if (!text.trim() || !post?.id || !myUid) return;
+    if ((!text.trim() && !selectedMedia) || !post?.id || !myUid) return;
     const txt = text.trim();
+    const parent = replyingTo;
+    const media = selectedMedia;
     setText('');
-    
+    setReplyingTo(null);
+    setSelectedMedia(null);
+
     const tempId = `temp-${Date.now()}`;
     const optimisticComment = {
       id: tempId,
       post_id: post.id,
       user_id: myUid,
       text: txt,
+      media_url: media?.uri ?? null,
+      media_type: media?.type ?? null,
+      reply_to_id: parent?.id ?? null,
       created_at: new Date().toISOString(),
       likes: 0,
       users: { name: 'Posting...' },
-      isOptimistic: true
+      isOptimistic: true,
     };
-    
-    setComments(prev => [...prev, optimisticComment]);
 
-    const { error, data: newComment } = await supabase.from('post_comments').insert({ post_id: post.id, user_id: myUid, text: txt }).select().single();
+    setComments((prev) => sortNewestFirst([optimisticComment, ...prev]));
+
+    const insertPayload = {
+      post_id: post.id,
+      user_id: myUid,
+      text: txt,
+      media_url: media?.uri ?? null,
+      media_type: media?.type ?? null,
+      ...(parent?.id ? { reply_to_id: parent.id } : {}),
+    };
+
+    let { error, data: newComment } = await supabase
+      .from('post_comments')
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    // Graceful fallback if reply_to_id column isn't migrated yet.
+    if (error && parent?.id) {
+      ({ error, data: newComment } = await supabase
+        .from('post_comments')
+        .insert({
+          post_id: post.id,
+          user_id: myUid,
+          text: txt,
+          media_url: media?.uri ?? null,
+          media_type: media?.type ?? null,
+        })
+        .select()
+        .single());
+    }
+
     if (error) {
-      setComments(prev => prev.filter(c => c.id !== tempId));
+      setComments((prev) => prev.filter((c) => c.id !== tempId));
       Alert.alert('Error', 'Failed to post comment.');
-    } else if (post.user_id !== myUid) {
-      // Send notification to the post owner
-      try {
-        const { data: me } = await supabase.from('users').select('name').eq('id', myUid).single();
-        const myName = me?.name || 'Someone';
+      return;
+    }
 
-        // Insert in-app notification
-        await supabase.from('notifications').insert({
-          recipient_id: post.user_id,
-          sender_id: myUid,
-          type: 'comment',
-          title: 'New Comment!',
-          message: `${myName} commented: "${txt}"`
-        });
+    const commentId = newComment?.id ?? null;
 
-        // Send push notification
-        const { sendCommentNotification } = await import('../utils/notifications');
-        await sendCommentNotification(post.user_id, myName, txt);
-      } catch (err) {
-        console.log('Error notifying comment:', err.message);
+    if (media?.isGiphy) {
+      trackGiphyAction(media, 'onsent', myUid);
+    }
+
+    try {
+      const { data: me } = await supabase.from('users').select('name').eq('id', myUid).single();
+      const myName = me?.name || 'Someone';
+
+      if (post.user_id !== myUid) {
+        const notificationSnippet = txt || (media?.type === GIPHY_CONTENT_TYPES.STICKER ? 'Sent a sticker' : 'Sent an image');
+        await notifyUser(post.user_id, myName, notificationSnippet, { isReply: false, commentId });
       }
+      if (parent?.user_id && parent.user_id !== myUid && parent.user_id !== post.user_id) {
+        await notifyUser(parent.user_id, myName, txt, { isReply: true, commentId });
+      }
+      await notifyMentions(txt, myName, commentId);
+    } catch (err) {
+      console.log('Error notifying comment:', err.message);
     }
   };
 
-  const handleLike = async (comment) => {
-    const { data } = await supabase.from('comment_likes').select('id').eq('comment_id', comment.id).eq('user_id', myUid).maybeSingle();
-    if (data) {
-      await supabase.from('comment_likes').delete().eq('comment_id', comment.id).eq('user_id', myUid);
-      await supabase.from('post_comments').update({ likes: Math.max(0, comment.likes - 1) }).eq('id', comment.id);
-    } else {
-      await supabase.from('comment_likes').insert({ comment_id: comment.id, user_id: myUid });
-      await supabase.from('post_comments').update({ likes: comment.likes + 1 }).eq('id', comment.id);
+  const handlePickCommentImage = async () => {
+    try {
+      setUploadingMedia(true);
+      const uri = await pickAndUploadPhoto(myUid, { freeAspect: true });
+      if (uri) setSelectedMedia({ uri, type: 'image' });
+    } catch (error) {
+      Alert.alert('Image unavailable', error.message || 'Could not add that image.');
+    } finally {
+      setUploadingMedia(false);
     }
+  };
+
+  const handleStickerSelect = (item) => {
+    setGiphyPickerVisible(false);
+    setSelectedMedia({
+      uri: item.mediaUrl,
+      type: item?.type ?? GIPHY_CONTENT_TYPES.STICKER,
+      isGiphy: true,
+      analytics: item.analytics,
+    });
+  };
+
+  const handleLike = async (comment) => {
+    if (comment.isOptimistic || String(comment.id).startsWith('temp-')) return;
+    const nextLikes = comment.likedByMe ? Math.max(0, (comment.likes || 0) - 1) : (comment.likes || 0) + 1;
+    setComments((prev) => prev.map((item) => item.id === comment.id
+      ? { ...item, likes: nextLikes, likedByMe: !comment.likedByMe }
+      : item));
+
+    let error = null;
+    const { data } = await supabase
+      .from('comment_likes')
+      .select('id')
+      .eq('comment_id', comment.id)
+      .eq('user_id', myUid)
+      .maybeSingle();
+    if (data) {
+      const deleteResult = await supabase.from('comment_likes').delete().eq('comment_id', comment.id).eq('user_id', myUid);
+      error = deleteResult.error;
+      const updateResult = await supabase
+        .from('post_comments')
+        .update({ likes: nextLikes })
+        .eq('id', comment.id);
+      error = error || updateResult.error;
+    } else {
+      const insertResult = await supabase.from('comment_likes').insert({ comment_id: comment.id, user_id: myUid });
+      error = insertResult.error;
+      const updateResult = await supabase
+        .from('post_comments')
+        .update({ likes: nextLikes })
+        .eq('id', comment.id);
+      error = error || updateResult.error;
+    }
+    if (error) {
+      setComments((prev) => prev.map((item) => item.id === comment.id
+        ? { ...item, likes: comment.likes || 0, likedByMe: comment.likedByMe }
+        : item));
+      Alert.alert('Like unavailable', error.message || 'Could not update this like.');
+    }
+  };
+
+  const handleReply = (comment) => {
+    Haptics.selectionAsync().catch(() => {});
+    setReplyingTo(comment);
+    inputRef.current?.focus();
+  };
+
+  const commentsById = new Map(comments.map((c) => [c.id, c]));
+
+  const renderComment = ({ item }) => {
+    const parent = item.reply_to_id ? commentsById.get(item.reply_to_id) : null;
+    const isReplyTarget = replyingTo?.id === item.id;
+    const isHighlighted = highlightCommentId === item.id;
+
+    return (
+      <View
+        style={[
+          modals.commentRow,
+          isReplyTarget && modals.commentRowActive,
+          isHighlighted && modals.commentRowHighlight,
+        ]}
+      >
+        <View style={modals.commentAvatar}>
+          {item.users?.photo_urls?.[0] ? (
+            <ExpoImage source={{ uri: item.users.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={16} />
+          ) : (
+            <ExpoImage source={{ uri: getPlaceholderUrl(item.users?.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={16} />
+          )}
+        </View>
+        <View style={modals.commentBody}>
+          <View style={modals.commentHeader}>
+            <Text style={modals.commentName}>{item.users?.name ?? 'User'}</Text>
+            <Text style={modals.commentTime}>{timeAgo(item.created_at)}</Text>
+          </View>
+          {parent ? (
+            <TouchableOpacity
+              style={modals.replySnippet}
+              activeOpacity={0.8}
+              onPress={() => {
+                const index = comments.findIndex((c) => c.id === parent.id);
+                if (index >= 0) {
+                  listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+                }
+              }}
+            >
+              <Text style={modals.replySnippetName}>
+                {parent.user_id === myUid ? 'You' : parent.users?.name ?? 'User'}
+              </Text>
+              <Text style={modals.replySnippetText} numberOfLines={2}>
+                {parent.text}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <MentionText
+            text={item.text}
+            style={modals.commentText}
+            mentionStyle={{ color: colors.ember, fontWeight: '700' }}
+          />
+          {item.media_url ? (
+            item.media_type === GIPHY_CONTENT_TYPES.STICKER ? (
+              <ExpoImage
+                source={{ uri: item.media_url }}
+                style={modals.commentSticker}
+                contentFit="contain"
+                cachePolicy="none"
+                accessibilityLabel="GIPHY sticker"
+              />
+            ) : (
+              <ExpoImage source={{ uri: item.media_url }} style={modals.commentImage} contentFit="cover" />
+            )
+          ) : null}
+          <TouchableOpacity style={modals.replyBtn} onPress={() => handleReply(item)} hitSlop={8}>
+            <Text style={modals.replyBtnText}>Reply</Text>
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity style={modals.commentLike} onPress={() => handleLike(item)}>
+          <Ionicons name={item.likedByMe ? 'heart' : 'heart-outline'} size={20} color={item.likedByMe ? colors.ember : colors.ash} />
+          <Text style={modals.commentLikeText}>{item.likes || 0}</Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
 
   return (
@@ -869,37 +1398,132 @@ function CommentModal({ visible, onClose, post, myUid }) {
             <Text style={modals.title}>Conversation</Text>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={colors.stone} /></TouchableOpacity>
           </View>
-          
+
           {loading ? (
-            <ActivityIndicator color={colors.ember} style={{ padding: 40 }} />
+            <SkeletonFeed itemCount={4} ItemComponent={SkeletonActivityItem} style={{ paddingHorizontal: 16 }} />
           ) : (
             <FlatList
+              ref={listRef}
               data={comments}
-              keyExtractor={c => c.id}
-              renderItem={({ item }) => (
-                <View style={modals.commentRow}>
-                  <View style={modals.commentAvatar}>
-                    {item.users?.photo_urls?.[0] ? <Image source={{ uri: item.users.photo_urls[0] }} style={StyleSheet.absoluteFillObject} borderRadius={16} /> : <Image source={{ uri: getPlaceholderUrl(item.users?.name) }} style={StyleSheet.absoluteFillObject} borderRadius={16} />}
-                  </View>
-                  <View style={modals.commentBody}>
-                    <Text style={modals.commentName}>{item.users?.name ?? 'User'}</Text>
-                    <Text style={modals.commentText}>{item.text}</Text>
-                  </View>
-                  <TouchableOpacity style={modals.commentLike} onPress={() => handleLike(item)}>
-                    <Ionicons name="heart-outline" size={16} color={colors.ash} />
-                    <Text style={modals.commentLikeText}>{item.likes || 0}</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-              contentContainerStyle={{ padding: 16 }}
+              keyExtractor={(c) => String(c.id)}
+              renderItem={renderComment}
+              contentContainerStyle={{ padding: 16, paddingBottom: 8 }}
               ListEmptyComponent={<Text style={modals.emptyText}>Start the conversation.</Text>}
+              onScrollToIndexFailed={(info) => {
+                setTimeout(() => {
+                  listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+                }, 80);
+              }}
             />
           )}
 
+          {replyingTo ? (
+            <View style={modals.replyBar}>
+              <View style={modals.replyBarAccent} />
+              <View style={{ flex: 1 }}>
+                <Text style={modals.replyBarLabel}>
+                  Replying to {replyingTo.user_id === myUid ? 'yourself' : replyingTo.users?.name ?? 'User'}
+                </Text>
+                <Text style={modals.replyBarText} numberOfLines={2}>{replyingTo.text}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setReplyingTo(null)} hitSlop={10}>
+                <Ionicons name="close-circle" size={22} color={colors.ash} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {mentionSuggestions.length > 0 ? (
+            <View style={modals.mentionList}>
+              {mentionSuggestions.map((f) => (
+                <TouchableOpacity key={f.id} style={modals.mentionRow} onPress={() => insertMention(f)}>
+                  <View style={modals.mentionAvatar}>
+                    {f.photo_urls?.[0] ? (
+                      <ExpoImage source={{ uri: f.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                    ) : (
+                      <ExpoImage source={{ uri: getPlaceholderUrl(f.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={14} />
+                    )}
+                  </View>
+                  <View>
+                    <Text style={modals.mentionName}>{f.name}</Text>
+                    <Text style={modals.mentionUsername}>@{f.username}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+
+          {selectedMedia ? (
+            <View style={modals.mediaPreview}>
+              {selectedMedia.type === GIPHY_CONTENT_TYPES.STICKER ? (
+                <ExpoImage source={{ uri: selectedMedia.uri }} style={modals.mediaPreviewImage} contentFit="contain" cachePolicy="none" />
+              ) : (
+                <ExpoImage source={{ uri: selectedMedia.uri }} style={modals.mediaPreviewImage} contentFit="cover" />
+              )}
+              <TouchableOpacity style={modals.mediaPreviewClose} onPress={() => setSelectedMedia(null)} accessibilityLabel="Remove attachment">
+                <Ionicons name="close-circle" size={22} color={colors.ash} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           <View style={modals.inputBar}>
-            <TextInput style={modals.input} value={text} onChangeText={setText} placeholder="Join the conversation…" placeholderTextColor={colors.ash} />
-            <TouchableOpacity style={modals.sendBtn} onPress={handleSend} disabled={!text.trim()}><Ionicons name="arrow-up" size={18} color={colors.white} /></TouchableOpacity>
+            <TouchableOpacity
+              style={modals.addAttachmentBtn}
+              onPress={() => setAttachmentSheetVisible(true)}
+              disabled={uploadingMedia}
+              accessibilityLabel="Add image or sticker"
+            >
+              {uploadingMedia ? <ActivityIndicator size="small" color={colors.ember} /> : <Ionicons name="add" size={25} color={colors.graphite} />}
+            </TouchableOpacity>
+            <RNAnimated.View
+              style={{
+                flex: 1,
+                marginRight: 8,
+                borderRadius: 24,
+                borderWidth: glowBorderWidth,
+                borderColor: glowBorderColor,
+                shadowColor: colors.ember,
+                shadowOffset: { width: 0, height: 0 },
+                shadowRadius: glowShadow,
+                shadowOpacity: glowShadowOpacity,
+                elevation: glowShadow,
+                overflow: 'hidden',
+              }}>
+              <TextInput
+                ref={inputRef}
+                style={modals.input}
+                value={text}
+                onChangeText={handleTextChange}
+                placeholder={
+                  replyingTo
+                    ? `Reply to ${replyingTo.user_id === myUid ? 'yourself' : replyingTo.users?.name ?? 'them'}…`
+                    : 'Join the conversation…'
+                }
+                placeholderTextColor={colors.ash}
+                onFocus={() => { setIsFocused(true); startGlow(); }}
+                onBlur={() => { setIsFocused(false); if (!text.trim() && !replyingTo) stopGlow(); }}
+              />
+            </RNAnimated.View>
+            <TouchableOpacity style={modals.sendBtn} onPress={handleSend} disabled={(!text.trim() && !selectedMedia) || uploadingMedia}>
+              <Ionicons name="arrow-up" size={18} color={colors.white} />
+            </TouchableOpacity>
           </View>
+
+          <AttachmentSheet
+            visible={attachmentSheetVisible}
+            onClose={() => setAttachmentSheetVisible(false)}
+            title="Add to comment"
+            options={[
+              { key: 'image', label: 'Image', icon: 'image-outline', iconColor: '#3b82f6', bgColor: '#3b82f620', onPress: handlePickCommentImage },
+              { key: 'sticker', label: 'GIFs', icon: 'happy-outline', iconColor: '#7c3aed', bgColor: '#7c3aed20', onPress: () => setGiphyPickerVisible(true) },
+            ]}
+          />
+          <GiphyPicker
+            visible={giphyPickerVisible}
+            onClose={() => setGiphyPickerVisible(false)}
+            onSelect={handleStickerSelect}
+            customerId={myUid}
+            contentTypes={[GIPHY_CONTENT_TYPES.GIF, GIPHY_CONTENT_TYPES.STICKER]}
+          />
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -968,9 +1592,9 @@ function ShareModal({ visible, onClose, post, myUid }) {
             <Text style={modals.title}>Share to Friend</Text>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={colors.stone} /></TouchableOpacity>
           </View>
-          
+
           {loading ? (
-            <ActivityIndicator color={colors.ember} style={{ padding: 40 }} />
+            <SkeletonFeed itemCount={4} ItemComponent={SkeletonSearchResult} style={{ paddingHorizontal: 16 }} />
           ) : (
             <FlatList
               data={friends}
@@ -978,7 +1602,7 @@ function ShareModal({ visible, onClose, post, myUid }) {
               renderItem={({ item }) => (
                 <View style={modals.friendRow}>
                   <View style={modals.friendAvatar}>
-                    {item.photo_urls?.[0] ? <Image source={{ uri: item.photo_urls[0] }} style={StyleSheet.absoluteFillObject} borderRadius={20} /> : <Image source={{ uri: getPlaceholderUrl(item.name) }} style={StyleSheet.absoluteFillObject} borderRadius={20} />}
+                    {item.photo_urls?.[0] ? <ExpoImage source={{ uri: item.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={20} /> : <ExpoImage source={{ uri: getPlaceholderUrl(item.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={20} />}
                   </View>
                   <Text style={modals.friendName}>{item.name}</Text>
                   <TouchableOpacity 
@@ -1009,17 +1633,74 @@ const getModalsStyles = (colors) => StyleSheet.create({
   title: { fontSize: 17, fontWeight: '700', color: colors.ink },
   emptyText: { textAlign: 'center', color: colors.stone, padding: 20 },
 
-  commentRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  commentAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.fog, alignItems: 'center', justifyContent: 'center' },
+  commentRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  commentRowActive: {
+    borderColor: colors.ember + '55',
+    backgroundColor: colors.emberLight,
+  },
+  commentRowHighlight: {
+    borderColor: colors.ember,
+    backgroundColor: colors.emberLight,
+  },
+  commentAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.fog, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   commentBody: { flex: 1 },
-  commentName: { fontSize: 13, fontWeight: '700', color: colors.ink, marginBottom: 2 },
-  commentText: { fontSize: 14, color: colors.graphite },
-  commentLike: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
-  commentLikeText: { fontSize: 11, color: colors.ash },
+  commentHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
+  commentName: { fontSize: 14, fontWeight: '700', color: colors.ink },
+  commentTime: { fontSize: 12, color: colors.ash },
+  commentText: { fontSize: 16, color: colors.graphite, lineHeight: 22 },
+  commentImage: { width: '100%', height: 180, borderRadius: 12, marginTop: 8, backgroundColor: colors.fog },
+  commentSticker: { width: 180, height: 150, marginTop: 6, alignSelf: 'flex-start' },
+  replySnippet: {
+    backgroundColor: colors.snow,
+    padding: 8,
+    borderRadius: 10,
+    marginBottom: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.ember,
+  },
+  replySnippetName: { fontSize: 12, fontWeight: '700', color: colors.ember, marginBottom: 2 },
+  replySnippetText: { fontSize: 12, color: colors.ash, lineHeight: 16 },
+  replyBtn: { alignSelf: 'flex-start', marginTop: 6, paddingVertical: 2 },
+  replyBtnText: { fontSize: 13, fontWeight: '700', color: colors.ember },
+  commentLike: { alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 8, paddingTop: 4 },
+  commentLikeText: { fontSize: 13, color: colors.ash },
 
-  inputBar: { flexDirection: 'row', padding: 12, borderTopWidth: 1, borderColor: colors.fog, alignItems: 'center' },
-  input: { flex: 1, backgroundColor: colors.snow, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, fontSize: 15, marginRight: 8, borderWidth: 1, borderColor: colors.fog, color: colors.ink },
-  sendBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.ember, alignItems: 'center', justifyContent: 'center' },
+  replyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 12,
+    marginBottom: 4,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: colors.emberLight,
+    borderWidth: 1,
+    borderColor: colors.ember + '44',
+  },
+  replyBarAccent: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 2,
+    backgroundColor: colors.ember,
+  },
+  replyBarLabel: { fontSize: 12, fontWeight: '700', color: colors.ember, marginBottom: 2 },
+  replyBarText: { fontSize: 13, color: colors.ash, lineHeight: 18 },
+
+  mediaPreview: { width: 86, height: 86, marginLeft: 12, marginBottom: 8, borderRadius: 12, overflow: 'hidden', backgroundColor: colors.snow },
+  mediaPreviewImage: { width: '100%', height: '100%' },
+  mediaPreviewClose: { position: 'absolute', top: 2, right: 2, backgroundColor: colors.white, borderRadius: 11 },
+  inputBar: { flexDirection: 'row', padding: 12, borderTopWidth: 1, borderColor: colors.fog, alignItems: 'center', marginBottom: 12, gap: 8 },
+  addAttachmentBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.snow, borderWidth: 1, borderColor: colors.fog },
+  input: { flex: 1, backgroundColor: colors.snow, borderRadius: 24, paddingHorizontal: 18, paddingVertical: 14, fontSize: 16, minHeight: 50, color: colors.ink },
+  sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.ember, alignItems: 'center', justifyContent: 'center' },
 
   friendRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   friendAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.fog, alignItems: 'center', justifyContent: 'center' },
@@ -1028,11 +1709,24 @@ const getModalsStyles = (colors) => StyleSheet.create({
   shareBtnSent: { backgroundColor: colors.fog },
   shareBtnText: { color: colors.white, fontWeight: '600', fontSize: 13 },
   shareBtnTextSent: { color: colors.stone },
+  mentionList: {
+    marginHorizontal: 12,
+    marginBottom: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.fog,
+    backgroundColor: colors.snow,
+    overflow: 'hidden',
+  },
+  mentionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderBottomWidth: 1, borderBottomColor: colors.fog },
+  mentionAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.fog, overflow: 'hidden' },
+  mentionName: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  mentionUsername: { fontSize: 12, color: colors.ember },
 });
 
 // ── Main PostsScreen ─────────────────────────────────────────────────────────
 
-export default function PostsScreen({ navigation }) {
+export default function PostsScreen({ navigation, feedTarget, onFeedTargetHandled }) {
   const { colors, shadow, isDark } = useTheme();
   const s = getStyles(colors, shadow, isDark);
   const modals = getModalsStyles(colors);
@@ -1044,8 +1738,10 @@ export default function PostsScreen({ navigation }) {
   const [myVibe,     setMyVibe]     = useState(null); // viewer's active vibe, for the "same vibe" cue
 
   const [activeCommentPost, setActiveCommentPost] = useState(null);
+  const [highlightCommentId, setHighlightCommentId] = useState(null);
   const [activeSharePost, setActiveSharePost] = useState(null);
   const [activeLikesPost, setActiveLikesPost] = useState(null);
+  const [viewingImage, setViewingImage] = useState(null);
   const [filterType,      setFilterType]      = useState('all');
 
   const loadPosts = useCallback(async () => {
@@ -1149,6 +1845,40 @@ export default function PostsScreen({ navigation }) {
     })();
   }, [loadPosts]);
 
+  useEffect(() => {
+    if (!feedTarget?.postId) return;
+
+    let cancelled = false;
+    (async () => {
+      const { data: postData, error } = await supabase
+        .from('posts')
+        .select('*')
+        .eq('id', feedTarget.postId)
+        .single();
+
+      if (cancelled) return;
+
+      if (error || !postData) {
+        onFeedTargetHandled?.();
+        return;
+      }
+
+      const { data: userData } = await supabase
+        .from('users')
+        .select('id, name, username, photo_urls, current_vibe, vibe_set_at')
+        .eq('id', postData.user_id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      setHighlightCommentId(feedTarget.commentId || null);
+      setActiveCommentPost({ ...postData, users: userData ?? null });
+      onFeedTargetHandled?.();
+    })();
+
+    return () => { cancelled = true; };
+  }, [feedTarget?.postId, feedTarget?.commentId, feedTarget?.ts]);
+
   const handleRefresh = () => { setRefreshing(true); loadPosts(); };
 
   const handleDeletePost = async (post) => {
@@ -1212,14 +1942,15 @@ export default function PostsScreen({ navigation }) {
       await supabase.from('notifications').insert({
         recipient_id: post.user_id,
         sender_id: myUid,
+        post_id: post.id,
         type: 'like',
         title: 'New Like!',
-        message: `${myName} liked your post.`
+        message: `${myName} liked your post.`,
       });
 
       // Send push notification via the exported helper
       const { sendLikeNotification } = await import('../utils/notifications');
-      await sendLikeNotification(post.user_id, myName);
+      await sendLikeNotification(post.user_id, myName, post.id);
     } catch (err) {
       console.log('Error notifying like:', err.message);
       // Revert the notified flag if we failed, so we can try again next time they like
@@ -1275,10 +2006,6 @@ export default function PostsScreen({ navigation }) {
   return (
     <View style={s.root}>
       <View style={s.header}>
-        <View style={s.headerTitleRow}>
-          <Text style={s.title}>Vibes</Text>
-          <AnimatedSparkles size={24} color={colors.ember} />
-        </View>
         <TouchableOpacity style={s.writeBtn} onPress={() => setCreating(true)}>
           <Ionicons name="create-outline" size={16} color={colors.white} style={{ marginRight: 4 }} />
           <Text style={s.writeBtnText}>Post</Text>
@@ -1310,9 +2037,7 @@ export default function PostsScreen({ navigation }) {
       </View>
 
       {loading ? (
-        <View style={s.center}>
-          <AnimatedSparkles size={48} color={colors.ember} />
-        </View>
+        <SkeletonFeed itemCount={3} ItemComponent={SkeletonPost} />
       ) : (
         <FlatList
           data={displayedPosts}
@@ -1324,6 +2049,7 @@ export default function PostsScreen({ navigation }) {
               myVibe={myVibe}
               canDelete={item.user_id === myUid}
               onDelete={handleDeletePost}
+              onOpenImage={setViewingImage}
               onOpenComments={setActiveCommentPost}
               onOpenShare={setActiveSharePost}
               onLike={handleLikePost}
@@ -1348,11 +2074,25 @@ export default function PostsScreen({ navigation }) {
         />
       )}
 
-      {!loading && posts.length > 0 && (
-        <TouchableOpacity style={s.fab} onPress={() => setCreating(true)}>
-          <Ionicons name="create" size={24} color={colors.white} />
-        </TouchableOpacity>
-      )}
+      <Modal
+        visible={!!viewingImage}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setViewingImage(null)}
+      >
+        <View style={s.imageViewerOverlay}>
+          <TouchableOpacity
+            style={s.imageViewerClose}
+            onPress={() => setViewingImage(null)}
+            hitSlop={12}
+          >
+            <Ionicons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          {viewingImage ? (
+            <ExpoImage source={{ uri: viewingImage }} style={s.imageViewerImage} contentFit="contain" />
+          ) : null}
+        </View>
+      </Modal>
 
       <CreatePostModal
         visible={creating}
@@ -1363,9 +2103,10 @@ export default function PostsScreen({ navigation }) {
 
       <CommentModal
         visible={!!activeCommentPost}
-        onClose={() => setActiveCommentPost(null)}
+        onClose={() => { setActiveCommentPost(null); setHighlightCommentId(null); }}
         post={activeCommentPost}
         myUid={myUid}
+        highlightCommentId={highlightCommentId}
       />
 
       <ShareModal
@@ -1390,11 +2131,9 @@ export default function PostsScreen({ navigation }) {
 const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   root:   { flex: 1, backgroundColor: colors.snow },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
     paddingHorizontal: 22, paddingTop: 56, paddingBottom: 12,
   },
-  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  title:        { fontSize: 32, fontWeight: '800', color: colors.ink, letterSpacing: -0.8 },
   writeBtn:     { backgroundColor: colors.ember, borderRadius: radius.full, paddingVertical: 8, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
   writeBtnText: { color: colors.white, fontWeight: '700', fontSize: 14 },
   
@@ -1411,12 +2150,9 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   emptySub:     { fontSize: 15, color: colors.stone, textAlign: 'center' },
   emptyBtn:     { backgroundColor: colors.ember, borderRadius: radius.full, paddingVertical: 12, paddingHorizontal: 28, marginTop: 8 },
   emptyBtnText: { color: colors.white, fontWeight: '600', fontSize: 15 },
-  fab: {
-    position: 'absolute', bottom: Platform.OS === 'ios' ? 120 : 100, right: 22,
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: colors.ember, alignItems: 'center', justifyContent: 'center',
-    ...shadow.card,
-  },
+  imageViewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  imageViewerImage: { width: '100%', height: '82%' },
+  imageViewerClose: { position: 'absolute', top: 52, right: 20, zIndex: 2, width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.18)' },
 });
 
 // ── Likes Modal ────────────────────────────────────────────────────────────
@@ -1453,9 +2189,9 @@ function LikesModal({ visible, onClose, post, colors, modals, navigation }) {
             <Text style={modals.title}>Likes</Text>
             <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={colors.stone} /></TouchableOpacity>
           </View>
-          
+
           {loading ? (
-            <ActivityIndicator color={colors.ember} style={{ padding: 40 }} />
+            <SkeletonFeed itemCount={4} ItemComponent={SkeletonSearchResult} style={{ paddingHorizontal: 16 }} />
           ) : (
             <FlatList
               data={likes}
@@ -1469,7 +2205,7 @@ function LikesModal({ visible, onClose, post, colors, modals, navigation }) {
                   }}
                 >
                   <View style={modals.friendAvatar}>
-                    {item.photo_urls?.[0] ? <Image source={{ uri: item.photo_urls[0] }} style={StyleSheet.absoluteFillObject} borderRadius={20} /> : <Image source={{ uri: getPlaceholderUrl(item.name) }} style={StyleSheet.absoluteFillObject} borderRadius={20} />}
+                    {item.photo_urls?.[0] ? <ExpoImage source={{ uri: item.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={20} /> : <ExpoImage source={{ uri: getPlaceholderUrl(item.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } borderRadius={20} />}
                   </View>
                   <Text style={modals.friendName}>{item.name}</Text>
                   <Ionicons name="heart" size={16} color={colors.ember} />

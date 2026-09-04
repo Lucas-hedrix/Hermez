@@ -1,25 +1,23 @@
 // navigation/AppNavigator.jsx
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, Dimensions, ScrollView, PanResponder } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Dimensions, ScrollView, PanResponder, BackHandler } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withRepeat,
-  withTiming,
-  Easing,
+  interpolate,
+  Extrapolation,
 } from 'react-native-reanimated';
-import { radius } from '../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { registerForPushNotifications, promptForPushNotificationsIfNeeded } from '../utils/notifications';
-import { countPendingIncomingSparks } from '../services/sparks';
-
-// Screens
+import { handleNotificationNavigation } from '../utils/notificationNavigation';
+import * as Notifications from 'expo-notifications';
+import { countPendingIncomingSparks, checkUnattendedSparkReminders } from '../services/sparks';
 import WelcomeScreen from '../screens/WelcomeScreen';
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
@@ -42,194 +40,197 @@ import CirclesScreen from '../screens/CirclesScreen';
 import ResetPasswordScreen from '../screens/ResetPasswordScreen';
 import SplashScreen from '../screens/SplashScreen';
 import ActivityScreen from '../screens/ActivityScreen';
+import ReferralsScreen from '../screens/ReferralsScreen';
+import ReferralRewardWatcher from '../components/ReferralRewardWatcher';
 import * as Linking from 'expo-linking';
 
-// ── Glassmorphic bottom tab bar ───────────────────────────────────────────────
-function TabBar({ active, setActive, matchesBadge, colors }) {
-  const tabs = [
-    { id: 'Discover', icon: 'earth',              iconOff: 'earth-outline',         label: 'Discover' },
-    { id: 'Circles',  icon: 'people-sharp',       iconOff: 'people-outline',        label: 'Circles'  },
-    { id: 'Feed',     icon: 'newspaper',          iconOff: 'newspaper-outline',     label: 'Feed'     },
-    { id: 'Chat',     icon: 'chatbubbles-sharp',  iconOff: 'chatbubbles-outline',   label: 'Chat',    badge: matchesBadge },
-    { id: 'Profile',  icon: 'person-circle',      iconOff: 'person-circle-outline', label: 'Profile'  },
-  ];
+const DISCO_ICON = require('../../assets/disco-icon.png');
+const LIQUID_SPRING = { damping: 15, stiffness: 140, mass: 0.9, overshootClamping: false };
+const AUTH_SCREENS = ['Login', 'Register', 'ProfileSetup', 'VerifyEmail', 'EmailConfirmed', 'ResetPassword'];
+const ROOT_SCREENS = ['Welcome', 'MainTabs'];
+const HISTORY_LIMIT = 20;
 
-  const [tabWidth, setTabWidth] = useState(0);
-  const activeIndex = tabs.findIndex(t => t.id === active);
-  
-  const indicatorPosition = useSharedValue(0);
-  const shinePosition = useSharedValue(-200);
+// ── Animated sticky bottom tab bar ───────────────────────────────────────────
+function TabItem({ tab, isActive, onPress, colors, inactiveColor, badgeBorderColor, profilePhoto }) {
+  const progress = useSharedValue(isActive ? 1 : 0);
+  const isDisco = tab.id === 'Feed';
+  const isProfile = tab.id === 'Profile';
 
   useEffect(() => {
-    if (tabWidth > 0) {
-      indicatorPosition.value = withSpring(activeIndex * tabWidth, {
-        damping: 18,
-        stiffness: 120,
-      });
+    progress.value = withSpring(isActive ? 1 : 0, LIQUID_SPRING);
+  }, [isActive, progress]);
+
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: interpolate(progress.value, [0, 1], [2, -11], Extrapolation.CLAMP) },
+      { scale: interpolate(progress.value, [0, 1], [0.9, 1.16], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  const labelStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 1], [0.48, 1], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(progress.value, [0, 1], [0, 3], Extrapolation.CLAMP) },
+      { scale: interpolate(progress.value, [0, 1], [0.9, 1], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  const iconColor = isActive ? colors.ember : inactiveColor;
+  const iconSize = isActive ? 28 : 26;
+
+  const renderIcon = () => {
+    if (isDisco) {
+      return (
+        <Image
+          source={DISCO_ICON}
+          style={[
+            tb.discoImage,
+            !isActive && tb.discoImageInactive,
+            isActive && tb.discoImageActive,
+          ]}
+          contentFit="contain"
+        />
+      );
     }
-  }, [activeIndex, tabWidth]);
-
-  useEffect(() => {
-    shinePosition.value = withRepeat(
-      withTiming(600, { duration: 4000, easing: Easing.linear }),
-      -1,
-      false
+    if (isProfile && profilePhoto) {
+      return (
+        <View style={[tb.avatarWrap, isActive && { borderColor: colors.ember }]}>
+          <Image source={{ uri: profilePhoto }} style={tb.avatarImage} />
+        </View>
+      );
+    }
+    return (
+      <Ionicons
+        name={isActive ? tab.icon : tab.iconOff}
+        size={iconSize}
+        color={iconColor}
+      />
     );
-  }, []);
-
-  const indicatorStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: indicatorPosition.value }],
-    width: tabWidth,
-  }));
-
-  const shineStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: shinePosition.value }],
-  }));
-
-  const handlePress = (tabId, index) => {
-    if (active === tabId) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setActive(tabId);
   };
 
   return (
-    <View style={tb.wrapper} pointerEvents="box-none">
-      <BlurView intensity={80} tint="dark" style={tb.blurContainer}>
-        <LinearGradient
-          colors={['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.02)']}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
-        
-        {tabWidth > 0 && (
-          <Animated.View style={[tb.activeIndicatorWrap, indicatorStyle]} pointerEvents="none">
-            <View style={tb.activeGlassDrop}>
-              <LinearGradient
-                colors={['rgba(255,255,255,0.3)', 'rgba(255,255,255,0.05)']}
-                style={StyleSheet.absoluteFill}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 0, y: 1 }}
-              />
+    <TouchableOpacity style={tb.btn} onPress={onPress} activeOpacity={0.72} hitSlop={{ top: 8, bottom: 4 }}>
+      <View style={tb.iconCol}>
+        <Animated.View style={[tb.iconWrap, iconStyle]}>
+          {renderIcon()}
+          {tab.badge > 0 && (
+            <View style={[tb.badge, { backgroundColor: colors.ember, borderColor: badgeBorderColor }]}>
+              <Text style={tb.badgeText}>{tab.badge > 9 ? '9+' : tab.badge}</Text>
             </View>
-          </Animated.View>
-        )}
-
-        <View 
-          style={tb.bar} 
-          onLayout={(e) => {
-            const width = e.nativeEvent.layout.width;
-            setTabWidth(width / tabs.length);
-          }}
-        >
-          {tabs.map((tab, index) => {
-            const isActive = active === tab.id;
-            return (
-              <TouchableOpacity 
-                key={tab.id} 
-                style={tb.btn} 
-                onPress={() => handlePress(tab.id, index)} 
-                activeOpacity={0.8}
-              >
-                <View style={tb.iconWrap}>
-                  <Ionicons
-                    name={isActive ? tab.icon : tab.iconOff}
-                    size={26}
-                    color={isActive ? '#ffffff' : 'rgba(255,255,255,0.5)'}
-                  />
-                  {tab.badge > 0 && (
-                    <View style={[tb.badge, { backgroundColor: colors.ember }]}>
-                      <Text style={tb.badgeText}>{tab.badge > 9 ? '9+' : tab.badge}</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[tb.label, isActive ? tb.labelActive : tb.labelInactive]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <Animated.View style={[tb.shineOverlay, shineStyle]} pointerEvents="none">
-          <LinearGradient
-            colors={['transparent', 'rgba(255,255,255,0.2)', 'transparent']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={StyleSheet.absoluteFill}
-          />
+          )}
         </Animated.View>
-      </BlurView>
+      </View>
+      <Animated.Text
+        style={[
+          tb.label,
+          { color: isActive ? colors.ember : inactiveColor },
+          labelStyle,
+        ]}
+      >
+        {tab.label}
+      </Animated.Text>
+    </TouchableOpacity>
+  );
+}
+
+function TabBar({ active, setActive, matchesBadge, colors, isDark, profilePhoto }) {
+  const insets = useSafeAreaInsets();
+  const tabs = [
+    { id: 'Discover', icon: 'earth',             iconOff: 'earth-outline',         label: 'Discover' },
+    { id: 'Circles',  icon: 'people-sharp',      iconOff: 'people-outline',        label: 'Circles'  },
+    { id: 'Feed',     icon: 'newspaper',         iconOff: 'newspaper-outline',     label: 'Feed'     },
+    { id: 'Chat',     icon: 'paper-plane',       iconOff: 'paper-plane-outline',   label: 'Chat',    badge: matchesBadge },
+    { id: 'Profile',  icon: 'person-circle',     iconOff: 'person-circle-outline', label: 'Profile'  },
+  ];
+
+  const handlePress = (tabId) => {
+    if (active === tabId) return;
+    Haptics.selectionAsync().catch(() => {});
+    setActive(tabId);
+  };
+
+  const backgroundColor = isDark ? '#121212' : '#FFFFFF';
+  const borderTopColor = isDark ? '#2C2C2E' : '#F0E6E4';
+  const inactiveColor = isDark ? '#8E8E93' : '#8E8E93';
+  const badgeBorderColor = backgroundColor;
+  const bottomPad = Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 8);
+
+  return (
+    <View style={[tb.wrapper, { backgroundColor, borderTopColor, paddingBottom: bottomPad }]}>
+      <View style={tb.bar}>
+        {tabs.map((tab) => (
+          <TabItem
+            key={tab.id}
+            tab={tab}
+            isActive={active === tab.id}
+            onPress={() => handlePress(tab.id)}
+            colors={colors}
+            inactiveColor={inactiveColor}
+            badgeBorderColor={badgeBorderColor}
+            profilePhoto={profilePhoto}
+          />
+        ))}
+      </View>
     </View>
   );
 }
 
 const tb = StyleSheet.create({
   wrapper: {
-    position: 'absolute', 
-    bottom: Platform.OS === 'ios' ? 24 : 16, 
-    left: 16, 
-    right: 16,
-    zIndex: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 8,
-  },
-  blurContainer: {
-    borderRadius: 32,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderTopColor: 'rgba(255,255,255,0.4)',
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   bar: {
     flexDirection: 'row',
-    height: 64,
-    alignItems: 'center',
+    height: 72,
+    alignItems: 'flex-end',
+    paddingBottom: 2,
   },
-  activeIndicatorWrap: {
-    position: 'absolute',
-    top: 6,
-    bottom: 6,
-    paddingHorizontal: 6,
-  },
-  activeGlassDrop: {
+  btn: {
     flex: 1,
-    borderRadius: 24,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    shadowColor: '#fff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    height: '100%',
+    paddingBottom: 2,
   },
-  btn: { 
-    flex: 1, 
-    alignItems: 'center', 
+  iconCol: {
+    width: 52,
+    height: 44,
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  iconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  discoImage: {
+    width: 34,
+    height: 34,
+  },
+  discoImageActive: {
+    width: 36,
+    height: 36,
+  },
+  discoImageInactive: {
+    opacity: 0.55,
+  },
+  avatarWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  avatarImage: {
+    width: '100%',
     height: '100%',
   },
-  iconWrap: { position: 'relative' },
   badge: {
-    position: 'absolute', top: -4, right: -10,
-    minWidth: 16, height: 16, borderRadius: 8,
+    position: 'absolute', top: -2, right: -14,
+    minWidth: 17, height: 17, borderRadius: 9,
     alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
-    borderColor: 'rgba(30,30,40,0.9)',
   },
   badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
-  label: { fontSize: 10, marginTop: 4 },
-  labelActive: { color: '#fff', fontWeight: '700' },
-  labelInactive: { color: 'rgba(255,255,255,0.6)', fontWeight: '500' },
-  shineOverlay: {
-    position: 'absolute',
-    top: 0, bottom: 0, left: 0,
-    width: 60,
-    transform: [{ skewX: '-20deg' }],
-  },
+  label: { fontSize: 11, marginTop: 1, fontWeight: '700', letterSpacing: 0.1 },
 });
 
 // ── Root Navigator ──────────────────────────────────────────────────────────
@@ -244,12 +245,41 @@ export default function AppNavigator() {
   const [sparksBadge, setSparksBadge] = useState(0);
   const [chatSubTab, setChatSubTab] = useState(null);
   const [myUid, setMyUid] = useState(null);
+  const [profilePhoto, setProfilePhoto] = useState(null);
   const [sessionCheckDone, setSessionCheckDone] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [feedTarget, setFeedTarget] = useState(null);
 
   const TABS = ['Discover', 'Circles', 'Feed', 'Chat', 'Profile'];
   const scrollRef = useRef(null);
   const windowWidth = Dimensions.get('window').width;
+  const historyRef = useRef([]);
+  const screenRef = useRef(screen);
+  const paramsRef = useRef(params);
+  const tabRef = useRef(tab);
+  const goBackRef = useRef(() => false);
+
+  screenRef.current = screen;
+  paramsRef.current = params;
+  tabRef.current = tab;
+
+  useEffect(() => {
+    if (!myUid) {
+      setProfilePhoto(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('users')
+        .select('photo_urls')
+        .eq('id', myUid)
+        .maybeSingle();
+      if (cancelled) return;
+      setProfilePhoto(data?.photo_urls?.[0] || null);
+    })();
+    return () => { cancelled = true; };
+  }, [myUid, tab, screen]);
 
   const edgePanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (evt, gestureState) => {
@@ -258,10 +288,10 @@ export default function AppNavigator() {
     },
     onPanResponderRelease: (evt, gestureState) => {
       if (gestureState.dx > 50) {
-        goBack();
+        goBackRef.current();
       }
     },
-  }), [screen]);
+  }), []);
 
   const handleSetTab = (newTab) => {
     setTab(newTab);
@@ -276,26 +306,91 @@ export default function AppNavigator() {
     }
   }, [tab, windowWidth]);
 
+  const clearHistory = () => {
+    historyRef.current = [];
+  };
+
+  const pushHistory = () => {
+    historyRef.current = [
+      ...historyRef.current,
+      { screen: screenRef.current, params: paramsRef.current, tab: tabRef.current },
+    ].slice(-HISTORY_LIMIT);
+  };
+
+  const resetTo = (name, p = {}) => {
+    clearHistory();
+    setScreen(name);
+    setParams(p);
+  };
+
   const navigate = (name, p = {}) => {
+    // MatchScreen still calls navigate('Matches') — that is the Chat tab, not a stack screen.
+    if (name === 'Matches') {
+      resetTo('MainTabs');
+      setTab('Chat');
+      return;
+    }
+    if (ROOT_SCREENS.includes(name)) {
+      resetTo(name, p);
+      return;
+    }
+    if (screenRef.current !== name || paramsRef.current !== p) {
+      pushHistory();
+    }
     setScreen(name);
     setParams(p);
   };
 
   const replace = (name, p = {}) => {
+    if (ROOT_SCREENS.includes(name)) {
+      resetTo(name, p);
+      return;
+    }
     setScreen(name);
     setParams(p);
   };
 
-  const goBack = () => {
-    if (['Login', 'Register', 'ProfileSetup', 'VerifyEmail', 'EmailConfirmed', 'ResetPassword'].includes(screen)) {
+  const goBack = useCallback(() => {
+    const hist = historyRef.current;
+    if (hist.length > 0) {
+      const prev = hist[hist.length - 1];
+      historyRef.current = hist.slice(0, -1);
+      setScreen(prev.screen);
+      setParams(prev.params || {});
+      if (prev.tab) setTab(prev.tab);
+      return true;
+    }
+
+    const current = screenRef.current;
+    if (AUTH_SCREENS.includes(current)) {
+      historyRef.current = [];
       setScreen('Welcome');
       setParams({});
-    } else {
+      return true;
+    }
+
+    if (!ROOT_SCREENS.includes(current)) {
+      historyRef.current = [];
       setScreen('MainTabs');
       setParams({});
+      return true;
     }
-  };
 
+    if (current === 'MainTabs' && tabRef.current !== 'Discover') {
+      setTab('Discover');
+      return true;
+    }
+
+    return false;
+  }, []);
+
+  goBackRef.current = goBack;
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => goBackRef.current());
+    return () => sub.remove();
+  }, []);
 
   const nav = {
     navigate,
@@ -306,23 +401,63 @@ export default function AppNavigator() {
       setChatSubTab('sparks');
     },
     switchTab: (tabName) => {
+      clearHistory();
       setScreen('MainTabs');
       setTab(tabName);
     },
+    openFeedPost: (postId, commentId = null) => {
+      clearHistory();
+      setScreen('MainTabs');
+      setTab('Feed');
+      setFeedTarget({ postId, commentId, ts: Date.now() });
+    },
+    clearFeedTarget: () => setFeedTarget(null),
+    openReferrals: () => {
+      pushHistory();
+      setScreen('Referrals');
+      setParams({});
+    },
   };
+
+  // ── Push notification tap → deep link ─────────────────────────────────────
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+
+    const onResponse = (response) => {
+      const data = response?.notification?.request?.content?.data;
+      if (data) handleNotificationNavigation(data, nav);
+    };
+
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => { if (response) onResponse(response); })
+      .catch(() => {});
+
+    const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
+    return () => sub.remove();
+  }, [myUid]);
 
   // ── Deep Linking Watcher ──────────────────────────────────────────────────
   useEffect(() => {
     const handleAuthRedirect = async (url) => {
       if (!url) return;
 
+      // Email-confirmed link can arrive three ways:
+      //   1. Native app:     cupid://email-confirmed#access_token=...&type=signup
+      //   2. Web (Supabase): https://app-cupid-5292e.web.app/#access_token=...&type=signup
+      //   3. Web (our own):  https://app-cupid-5292e.web.app/#/email-confirmed
+      // We treat (1) and (2) as token-bearing (setSession runs below) and
+      // detect (3) by the #/email-confirmed hash route we set as redirectTo.
       const isEmailConfirmedLink =
         url.includes('type=email') ||
         url.includes('type=signup') ||
-        url.includes('confirmation_url');
+        url.includes('confirmation_url') ||
+        url.includes('#/email-confirmed') ||
+        url.endsWith('/email-confirmed');
 
       const isResetPasswordLink =
-        url.includes('type=recovery');
+        url.includes('type=recovery') ||
+        url.includes('#/reset-password') ||
+        url.endsWith('/reset-password');
 
       try {
         const hashIndex = url.indexOf('#');
@@ -354,6 +489,21 @@ export default function AppNavigator() {
             });
             if (error) console.log('Supabase set session error:', error.message);
           }
+
+          // Referral capture: ?ref=CODE (web link)
+          const refCode = queryParams.get('ref');
+          if (refCode) {
+            const { setPendingRef } = await import('../utils/pendingReferral');
+            await setPendingRef(refCode);
+          }
+        }
+
+        // Referral capture: cupid://r/CODE (app deep link)
+        // The path segment between '/r/' and the end (or '?') is the code.
+        const refMatch = url.match(/\/r\/([A-Za-z0-9]+)/);
+        if (refMatch && refMatch[1]) {
+          const { setPendingRef } = await import('../utils/pendingReferral');
+          await setPendingRef(refMatch[1]);
         }
 
         if (isEmailConfirmedLink) {
@@ -395,6 +545,7 @@ export default function AppNavigator() {
 
     const setupFriendshipWatch = async (uid) => {
       if (channel) return;
+      channel = 'pending';
 
       supabase
         .from('users')
@@ -429,6 +580,9 @@ export default function AppNavigator() {
       const refreshSparksBadge = async () => {
         const count = await countPendingIncomingSparks(uid);
         setSparksBadge(count);
+        if (count > 0) {
+          try { await checkUnattendedSparkReminders(uid); } catch (e) { console.log('[AppNavigator] unattended sparks reminder:', e.message); }
+        }
       };
       refreshSparksBadge();
 
@@ -505,6 +659,25 @@ export default function AppNavigator() {
             const { detectRegion } = await import('../supabase/storage');
             const region = await detectRegion().catch(() => '');
 
+            // Resolve any pending referral code (from a deep link) into a
+            // referrer id, so the new Google user gets `referred_by` set.
+            let referredBy = null;
+            try {
+              const { getPendingRef, clearPendingRef } = await import('../utils/pendingReferral');
+              const pendingCode = await getPendingRef();
+              if (pendingCode) {
+                const { data: referrer } = await supabase
+                  .from('users')
+                  .select('id')
+                  .eq('referral_code', String(pendingCode).toUpperCase())
+                  .maybeSingle();
+                if (referrer?.id) referredBy = referrer.id;
+                await clearPendingRef();
+              }
+            } catch (e) {
+              console.log('[AppNavigator] pending ref resolution failed:', e?.message);
+            }
+
             await supabase.from('users').insert({
               id: uid,
               name: meta.full_name ?? meta.name ?? session.user.email?.split('@')[0] ?? 'User',
@@ -524,6 +697,7 @@ export default function AppNavigator() {
               profile_complete: false,
               show_me_on_cupid: true,
               hide_last_seen: false,
+              referred_by: referredBy,
             }).then(({ error }) => {
               if (error) console.log('Google user row creation error:', error.message);
             });
@@ -541,6 +715,7 @@ export default function AppNavigator() {
               current === 'Register' ||
               current === 'VerifyEmail'
             ) {
+              historyRef.current = [];
               return 'MainTabs';
             }
             return current;
@@ -549,8 +724,10 @@ export default function AppNavigator() {
         }
       } else {
         setMyUid(null);
+        setProfilePhoto(null);
         setSearchBadge(0);
         setSparksBadge(0);
+        historyRef.current = [];
         setScreen('Welcome');
         setParams({});
 
@@ -578,7 +755,10 @@ export default function AppNavigator() {
           promptForPushNotificationsIfNeeded(uid);
 
           setScreen((current) => {
-            if (current === 'Welcome') return 'MainTabs';
+            if (current === 'Welcome') {
+              historyRef.current = [];
+              return 'MainTabs';
+            }
             return current;
           });
         }
@@ -607,6 +787,11 @@ export default function AppNavigator() {
           const uniqueChats = new Set(data.map(m => m.friendship_id));
           setMatchesBadge(uniqueChats.size);
         }
+
+        const sparkCount = await countPendingIncomingSparks(session.user.id);
+        if (sparkCount > 0) {
+          try { await checkUnattendedSparkReminders(session.user.id); } catch (e) { console.log('[AppNavigator] background spark reminder:', e.message); }
+        }
       }
     }, 15000); // 15 seconds
 
@@ -627,6 +812,7 @@ export default function AppNavigator() {
             pagingEnabled
             showsHorizontalScrollIndicator={false}
             bounces={false}
+            style={{ flex: 1 }}
             contentOffset={{ x: TABS.indexOf(tab) * windowWidth, y: 0 }}
             onMomentumScrollEnd={(e) => {
               const pageIndex = Math.round(e.nativeEvent.contentOffset.x / windowWidth);
@@ -638,7 +824,13 @@ export default function AppNavigator() {
               <View key={t} style={{ width: windowWidth, flex: 1 }}>
                 {t === 'Discover' && <DiscoverScreen navigation={nav} searchBadge={searchBadge} />}
                 {t === 'Circles' && <CirclesScreen navigation={nav} />}
-                {t === 'Feed' && <PostsScreen navigation={nav} />}
+                {t === 'Feed' && (
+                  <PostsScreen
+                    navigation={nav}
+                    feedTarget={feedTarget}
+                    onFeedTargetHandled={() => setFeedTarget(null)}
+                  />
+                )}
                 {t === 'Chat' && (
                   <MatchesScreen
                     navigation={nav}
@@ -658,6 +850,16 @@ export default function AppNavigator() {
             matchesBadge={matchesBadge + sparksBadge}
             colors={colors}
             isDark={isDark}
+            profilePhoto={profilePhoto}
+          />
+          {/* Celebration modal when the user earns a referral reward. */}
+          <ReferralRewardWatcher
+            myUid={myUid}
+            onViewWallet={() => {
+              pushHistory();
+              setScreen('Referrals');
+              setParams({});
+            }}
           />
         </View>
       );
@@ -712,13 +914,16 @@ export default function AppNavigator() {
       case 'Activity':
         return <ActivityScreen navigation={nav} route={{ params }} />;
 
+      case 'Referrals':
+        return <ReferralsScreen navigation={nav} />;
+
       default:
         return <WelcomeScreen navigation={nav} />;
     }
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.snow }} {...(screen !== 'MainTabs' ? edgePanResponder.panHandlers : {})}>
+    <View style={{ flex: 1, backgroundColor: colors.snow }} {...(Platform.OS !== 'web' && screen !== 'MainTabs' ? edgePanResponder.panHandlers : {})}>
       {renderScreen()}
       {showSplash && (
         <SplashScreen 

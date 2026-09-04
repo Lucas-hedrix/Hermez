@@ -2,15 +2,17 @@ import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
 // App.jsx — entry point
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import { ThemeProvider } from './src/theme/ThemeContext';
-import * as Updates from 'expo-updates';
 import { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
 import Constants from 'expo-constants';
 import { supabase } from './src/supabase/client';
 import UpdateModal from './src/components/UpdateModal';
-
+import { Platform } from 'react-native';
+import * as Font from 'expo-font';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { OtaUpdateProvider } from './src/context/OtaUpdateContext';
 
 function compareVersions(v1, v2) {
   const p1 = v1.split('.').map(Number);
@@ -25,6 +27,9 @@ function compareVersions(v1, v2) {
 }
 
 export default function App() {
+  const iconFonts = { ...Ionicons.font, ...MaterialIcons.font };
+  const [fontsLoaded] = Font.useFonts(iconFonts);
+  
   const [updateVisible, setUpdateVisible] = useState(false);
   const [isHardUpdate, setIsHardUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -86,43 +91,27 @@ export default function App() {
     }
     
     checkAppVersion();
-
-    async function checkForOTAUpdates() {
-      try {
-        if (!Updates.isEnvBare) {
-          const update = await Updates.checkForUpdateAsync();
-          if (update.isAvailable) {
-            await Updates.fetchUpdateAsync();
-            Alert.alert(
-              'Update Ready',
-              'A minor update has been downloaded. Restart the app to apply it.',
-              [
-                { text: 'Restart Now', onPress: () => Updates.reloadAsync() },
-                { text: 'Later', style: 'cancel' }
-              ]
-            );
-          }
-        }
-      } catch (e) {
-        // Silently ignore
-      }
-    }
-    
-    if (!__DEV__) {
-      checkForOTAUpdates();
-    }
   }, []);
 
+  // Never block the web shell on icon font downloads — it can hang on mobile browsers.
+  if (!fontsLoaded && Platform.OS !== 'web') {
+    return null;
+  }
+
   return (
-    <ThemeProvider>
-      <StatusBar style="auto" />
-      <AppNavigator />
-      <UpdateModal
-        visible={updateVisible}
-        isHardUpdate={isHardUpdate}
-        updateUrl={updateUrl}
-        onDismiss={() => setUpdateVisible(false)}
-      />
-    </ThemeProvider>
+    <SafeAreaProvider style={{ flex: 1 }}>
+      <ThemeProvider>
+        <OtaUpdateProvider>
+          <StatusBar style="auto" />
+          <AppNavigator />
+          <UpdateModal
+            visible={updateVisible}
+            isHardUpdate={isHardUpdate}
+            updateUrl={updateUrl}
+            onDismiss={() => setUpdateVisible(false)}
+          />
+        </OtaUpdateProvider>
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }

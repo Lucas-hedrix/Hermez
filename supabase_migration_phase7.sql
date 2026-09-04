@@ -1,6 +1,5 @@
 -- =======================================================
--- PHASE 7: CIRCLE JOIN QUESTIONS AND REQUESTS
--- Run this in your Supabase SQL Editor
+-- PHASE 7: CIRCLE JOIN QUESTIONS AND REQUESTS--
 -- =======================================================
 
 -- 1. Add join_questions column to circles table

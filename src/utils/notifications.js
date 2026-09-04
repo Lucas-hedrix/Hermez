@@ -21,15 +21,17 @@ import Constants from 'expo-constants';
 import { supabase } from '../supabase/client';
 
 // ── Global notification behaviour ──────────────────────────────────────────
-// Show a banner + play sound even when the app is in the foreground.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Push notifications are native-only; skip setup on web to avoid runtime errors.
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 // ── Android channel ────────────────────────────────────────────────────────
 // Android requires a notification channel. Create it once at module load.
@@ -52,6 +54,8 @@ if (Platform.OS === 'android') {
  * @returns {string|null} The Expo push token, or null if unavailable.
  */
 export async function registerForPushNotifications(userId) {
+  if (Platform.OS === 'web') return null;
+
   // Push tokens only work on real devices (iOS simulators will fail, but Android emulators with Play Services might work).
   if (!Device.isDevice && Platform.OS === 'ios') {
     console.log('[Notifications] Skipped: push tokens do not work on iOS simulators.');
@@ -121,6 +125,8 @@ export async function registerForPushNotifications(userId) {
  * @param {string} userId - The authenticated user's UUID.
  */
 export async function promptForPushNotificationsIfNeeded(userId) {
+  if (Platform.OS === 'web') return;
+
   const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
   
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -316,7 +322,7 @@ export async function sendSparkNotification(recipientId, senderName, messageText
  * @param {string} senderName     - Display name of the sender.
  * @param {string|null} circleName- The name of the circle, or null if it's a feed post.
  */
-export async function sendPostNotification(recipientIds, senderName, circleName) {
+export async function sendPostNotification(recipientIds, senderName, circleName, postId = null) {
   if (!recipientIds || recipientIds.length === 0 || !senderName) return;
 
   try {
@@ -342,7 +348,7 @@ export async function sendPostNotification(recipientIds, senderName, circleName)
       sound: 'default',
       title,
       body,
-      data: { type: 'post' },
+      data: { type: 'post', postId: postId ?? undefined },
     }));
 
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -377,7 +383,7 @@ export async function sendPostNotification(recipientIds, senderName, circleName)
  * @param {string} recipientId  - The recipient's user UUID.
  * @param {string} senderName   - Display name of the sender.
  */
-export async function sendLikeNotification(recipientId, senderName) {
+export async function sendLikeNotification(recipientId, senderName, postId = null) {
   if (!recipientId || !senderName) return;
 
   try {
@@ -395,7 +401,7 @@ export async function sendLikeNotification(recipientId, senderName) {
       sound: 'default',
       title: 'New Like!',
       body: `${senderName} liked your post.`,
-      data: { type: 'like' },
+      data: { type: 'like', postId: postId ?? undefined },
     };
 
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -428,7 +434,7 @@ export async function sendLikeNotification(recipientId, senderName) {
  * @param {string} senderName   - Display name of the sender.
  * @param {string} commentText  - A snippet of the comment text.
  */
-export async function sendCommentNotification(recipientId, senderName, commentText) {
+export async function sendCommentNotification(recipientId, senderName, commentText, { postId = null, commentId = null } = {}) {
   if (!recipientId || !senderName) return;
 
   try {
@@ -448,7 +454,11 @@ export async function sendCommentNotification(recipientId, senderName, commentTe
       sound: 'default',
       title: 'New Comment!',
       body: `${senderName}: "${snippet}"`,
-      data: { type: 'comment' },
+      data: {
+        type: 'comment',
+        postId: postId ?? undefined,
+        commentId: commentId ?? undefined,
+      },
     };
 
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -463,6 +473,52 @@ export async function sendCommentNotification(recipientId, senderName, commentTe
 
     const result = await response.json();
 
+    if (result?.data?.status === 'error') {
+      console.log('[Notifications] Push error:', result.data.message);
+    }
+  } catch (e) {
+    console.log('[Notifications] Unexpected error:', e.message);
+  }
+}
+
+export async function sendMentionNotification(recipientId, senderName, snippet, { postId = null, commentId = null } = {}) {
+  if (!recipientId || !senderName) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('push_token')
+      .eq('id', recipientId)
+      .single();
+
+    if (error || !data?.push_token) return;
+
+    const body = snippet.length > 50 ? snippet.substring(0, 50) + '...' : snippet;
+
+    const payload = {
+      to: data.push_token,
+      channelId: 'messages',
+      sound: 'default',
+      title: 'You were mentioned',
+      body: `${senderName}: "${body}"`,
+      data: {
+        type: 'mention',
+        postId: postId ?? undefined,
+        commentId: commentId ?? undefined,
+      },
+    };
+
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json();
     if (result?.data?.status === 'error') {
       console.log('[Notifications] Push error:', result.data.message);
     }

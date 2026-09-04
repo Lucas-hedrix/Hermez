@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { PrimaryButton, GhostButton } from '../components/UI';
 import { supabase } from '../supabase/client';
+import { EMAIL_CONFIRM_REDIRECT } from '../utils/authRedirect';
 
 export default function VerifyEmailScreen({ navigation, route }) {
   const { colors, shadow, isDark } = useTheme();
@@ -82,7 +83,9 @@ const handleCheckStatus = async () => {
         type: 'signup',
         email: email.trim().toLowerCase(),
         options: {
-          emailRedirectTo: 'cupid://email-confirmed',
+          // On web this points at the PWA origin (the cupid:// scheme only
+          // works on the native app). See utils/authRedirect.js.
+          emailRedirectTo: EMAIL_CONFIRM_REDIRECT,
         },
       });
 

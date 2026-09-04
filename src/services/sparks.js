@@ -375,3 +375,68 @@ export async function countPendingIncomingSparks(myUid) {
   if (error) return 0;
   return count ?? 0;
 }
+
+/**
+ * Send a daily reminder notification for any pending incoming spark that has not been
+ * accepted, ignored, or muted yet. This keeps the prompt visible without altering the
+ * spark status rules or acceptance logic.
+ */
+export async function checkUnattendedSparkReminders(myUid) {
+  if (!myUid) return 0;
+
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: pendingSparks, error: pendingError } = await supabase
+      .from('sparks')
+      .select('id, sender_id, custom_message, created_at')
+      .eq('receiver_id', myUid)
+      .eq('status', 'pending')
+      .lt('created_at', cutoff);
+
+    if (pendingError || !pendingSparks?.length) return 0;
+
+    const { data: recentReminders, error: reminderError } = await supabase
+      .from('notifications')
+      .select('sender_id')
+      .eq('recipient_id', myUid)
+      .eq('type', 'spark')
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    if (reminderError) {
+      console.log('[sparks] reminder check failed:', reminderError.message);
+      return 0;
+    }
+
+    const reminded = new Set((recentReminders ?? []).map((n) => n.sender_id).filter(Boolean));
+    let sent = 0;
+
+    for (const spark of pendingSparks) {
+      if (!spark.sender_id || reminded.has(spark.sender_id)) continue;
+
+      const { data: sender } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', spark.sender_id)
+        .maybeSingle();
+
+      const senderName = sender?.name || 'Someone';
+      const reminderMessage = spark.custom_message || 'You still have a spark waiting for a reply.';
+
+      await supabase.from('notifications').insert({
+        recipient_id: myUid,
+        sender_id: spark.sender_id,
+        type: 'spark',
+        title: 'Spark reminder',
+        message: `${senderName} is still waiting for your reply.`,
+      });
+
+      await sendSparkNotification(myUid, senderName, reminderMessage, spark.sender_id);
+      sent += 1;
+    }
+
+    return sent;
+  } catch (e) {
+    console.log('[sparks] unattended spark reminder error:', e.message);
+    return 0;
+  }
+}

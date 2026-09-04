@@ -1,4 +1,5 @@
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator} from 'react-native';
+import { Image } from 'expo-image';
 import { radius, fonts } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import GlassButton from './GlassButton';

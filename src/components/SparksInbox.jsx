@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 // SparksInbox — pending incoming/outgoing sparks (Chat tab)
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -6,10 +7,8 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   ActivityIndicator,
-  RefreshControl,
-} from 'react-native';
+  RefreshControl} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { radius } from '../theme';
 import GlassButton from './GlassButton';
@@ -21,9 +20,9 @@ import {
   acceptSpark,
   ignoreSpark,
 } from '../services/sparks';
-import AnimatedSparkles from './AnimatedSparkles';
 import { supabase } from '../supabase/client';
 import { getPlaceholderUrl } from '../utils/placeholders';
+import { SkeletonFeed, SkeletonSparkCard } from './Skeleton';
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -52,9 +51,9 @@ function SparkCard({
       <TouchableOpacity style={s.personRow} onPress={() => onOpenProfile?.(person)} activeOpacity={0.8}>
         <View style={[s.avatar, { borderColor: template.color + '55' }]}>
           {photo ? (
-            <Image source={{ uri: photo }} style={StyleSheet.absoluteFillObject} />
+            <Image source={{ uri: photo }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
           ) : (
-            <Image source={{ uri: getPlaceholderUrl(person?.name) }} style={StyleSheet.absoluteFillObject} />
+            <Image source={{ uri: getPlaceholderUrl(person?.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
           )}
         </View>
         <View style={{ flex: 1 }}>
@@ -185,9 +184,8 @@ export default function SparksInbox({ navigation, myUid, onSparkCountChange }) {
 
   if (loading) {
     return (
-      <View style={s.center}>
-        <AnimatedSparkles size={44} color={colors.ember} />
-        <Text style={s.loadingText}>Loading sparks…</Text>
+      <View style={{ paddingTop: 16 }}>
+        <SkeletonFeed itemCount={3} ItemComponent={SkeletonSparkCard} />
       </View>
     );
   }
@@ -202,6 +200,16 @@ export default function SparksInbox({ navigation, myUid, onSparkCountChange }) {
       }
       contentContainerStyle={s.scroll}
     >
+      {incoming.length > 0 && (
+        <View style={s.priorityBanner}>
+          <Ionicons name={SPARK_ICON} size={18} color={colors.ember} />
+          <View style={s.priorityTextWrap}>
+            <Text style={s.priorityTitle}>New sparks waiting</Text>
+            <Text style={s.prioritySub}>{incoming.length} person{incoming.length === 1 ? '' : 's'} still need a reply</Text>
+          </View>
+        </View>
+      )}
+
       {empty ? (
         <View style={s.empty}>
           <View style={s.emptyIcon}>
@@ -267,6 +275,22 @@ const getStyles = (colors, shadow) =>
     scroll: { paddingBottom: 24 },
     center: { alignItems: 'center', paddingVertical: 48, gap: 12 },
     loadingText: { color: colors.stone, fontSize: 14 },
+    priorityBanner: {
+      marginHorizontal: 16,
+      marginBottom: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: radius.xl,
+      backgroundColor: colors.emberLight,
+      borderWidth: 1,
+      borderColor: colors.ember + '33',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    priorityTextWrap: { flex: 1 },
+    priorityTitle: { fontSize: 14, fontWeight: '800', color: colors.ink },
+    prioritySub: { fontSize: 12, color: colors.stone, marginTop: 2 },
     sectionHead: {
       flexDirection: 'row',
       alignItems: 'center',

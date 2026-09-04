@@ -1,21 +1,23 @@
+import { Image } from 'expo-image';
 // screens/ProfileScreen.jsx — own profile + photo management + recent posts
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Dimensions, Image, Alert, ActivityIndicator,
-  Modal, RefreshControl, Animated, Platform, Share,
-} from 'react-native';
+  Dimensions, Alert, ActivityIndicator,
+  Modal, RefreshControl, Animated, Platform, Share} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
+import { SkeletonFeed, SkeletonProfileCard, SkeletonScreen } from '../components/Skeleton';
 import { supabase } from '../supabase/client';
 import { pickAndUploadPhoto, deletePhoto } from '../supabase/storage';
 import AnimatedSparkles from '../components/AnimatedSparkles';
 import { PROFILE_VIBES, getVibeColor, getVibeIcon, isVibeExpired } from '../constants/vibes';
 import { getInterestsByIds } from '../constants/interests';
 import { getPlaceholderUrl } from '../utils/placeholders';
+import { useOtaUpdate } from '../context/OtaUpdateContext';
 
 const { width: W } = Dimensions.get('window');
 const PHOTO_SIZE = (W - 48 - 10) / 2;
@@ -25,6 +27,7 @@ const AVATAR_SIZE = 108;
 export default function ProfileScreen({ navigation }) {
   const { colors, shadow, isDark } = useTheme();
   const s = getStyles(colors, shadow, isDark);
+  const { updateReady, applyUpdate } = useOtaUpdate();
   const [user, setUser]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -34,6 +37,7 @@ export default function ProfileScreen({ navigation }) {
   const [postsLoading, setPostsLoading] = useState(false);
   const [likesCount, setLikesCount]     = useState(0);
   const [profileStats, setProfileStats] = useState({ followers: 0, following: 0, circles: 0, posts: 0 });
+  const [statsSheet, setStatsSheet] = useState({ visible: false, type: 'followers', rows: [] });
   const [refreshing, setRefreshing]     = useState(false);
   const [photoModal, setPhotoModal] = useState({ visible: false, index: -1, uri: null });
   const [editKey, setEditKey]       = useState(0); // bump to reload after edit
@@ -143,6 +147,107 @@ export default function ProfileScreen({ navigation }) {
   useEffect(() => { loadPostsAndMatches(); }, [loadPostsAndMatches]);
 
   const handleRefresh = () => { setRefreshing(true); loadProfile(); };
+
+  const loadStatRows = useCallback(async (type) => {
+    if (!user?.id) return [];
+
+    try {
+      if (type === 'followers') {
+        const { data: rows } = await supabase
+          .from('friendships')
+          .select('requester_id')
+          .eq('recipient_id', user.id)
+          .eq('status', 'accepted')
+          .order('created_at', { ascending: false });
+
+        if (!rows?.length) return [];
+        const userIds = [...new Set(rows.map((row) => row.requester_id).filter(Boolean))];
+        const { data: profiles } = await supabase
+          .from('users')
+          .select('id, name, photo_urls')
+          .in('id', userIds);
+
+        const map = Object.fromEntries((profiles ?? []).map((person) => [person.id, person]));
+        return rows.map((row) => map[row.requester_id]).filter(Boolean);
+      }
+
+      if (type === 'following') {
+        const { data: rows } = await supabase
+          .from('friendships')
+          .select('recipient_id')
+          .eq('requester_id', user.id)
+          .eq('status', 'accepted')
+          .order('created_at', { ascending: false });
+
+        if (!rows?.length) return [];
+        const userIds = [...new Set(rows.map((row) => row.recipient_id).filter(Boolean))];
+        const { data: profiles } = await supabase
+          .from('users')
+          .select('id, name, photo_urls')
+          .in('id', userIds);
+
+        const map = Object.fromEntries((profiles ?? []).map((person) => [person.id, person]));
+        return rows.map((row) => map[row.recipient_id]).filter(Boolean);
+      }
+
+      const { data: memberships, error: membershipsError } = await supabase
+        .from('circle_members')
+        .select('circle_id, joined_at')
+        .eq('user_id', user.id)
+        .order('joined_at', { ascending: false });
+
+      if (membershipsError) {
+        console.log('Profile circle memberships error:', membershipsError.message);
+      }
+
+      const circleIds = [...new Set((memberships ?? []).map((row) => row.circle_id).filter(Boolean))];
+
+      let joinedCircles = [];
+      if (circleIds.length) {
+        const { data: circleRows, error: circlesError } = await supabase
+          .from('circles')
+          .select('id, name, cover_image_url, owner_id, created_at')
+          .in('id', circleIds)
+          .order('created_at', { ascending: false });
+
+        if (circlesError) {
+          console.log('Profile circle rows error:', circlesError.message);
+        } else {
+          const circleMap = Object.fromEntries((circleRows ?? []).map((circle) => [circle.id, circle]));
+          joinedCircles = (memberships ?? [])
+            .map((row) => {
+              const circle = circleMap[row.circle_id];
+              return circle ? { ...circle, joined_at: row.joined_at } : null;
+            })
+            .filter(Boolean);
+        }
+      }
+
+      const { data: ownedCircles, error: ownedError } = await supabase
+        .from('circles')
+        .select('id, name, cover_image_url, owner_id, created_at')
+        .eq('owner_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (ownedError) {
+        console.log('Profile owned circles error:', ownedError.message);
+      }
+
+      const merged = [...joinedCircles, ...(ownedCircles ?? [])]
+        .filter((circle, index, arr) => circle && arr.findIndex((item) => item && item.id === circle.id) === index);
+
+      return merged.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    } catch (e) {
+      console.log('Profile stat rows error:', e.message);
+      return [];
+    }
+  }, [user?.id]);
+
+  const openStatsSheet = async (type) => {
+    const rows = await loadStatRows(type);
+    setStatsSheet({ visible: true, type, rows });
+  };
+
   const handleShareProfile = async () => {
     try {
       await Share.share({
@@ -310,11 +415,7 @@ export default function ProfileScreen({ navigation }) {
   // ── Loading / empty ───────────────────────────────────────────────────────
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.snow, alignItems: 'center', justifyContent: 'center' }}>
-        <AnimatedSparkles size={48} color={colors.ember} />
-        <Text style={{ marginTop: 12, color: colors.stone, fontSize: 14 }}>Loading profile… please be patient
-      </Text>
-      </View>
+      <SkeletonScreen><SkeletonProfileCard style={{ paddingTop: 60 }} /></SkeletonScreen>
     );
   }
 
@@ -345,6 +446,62 @@ export default function ProfileScreen({ navigation }) {
   return (
     <View style={s.root}>
       {/* Photo management modal */}
+      <Modal
+        visible={statsSheet.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setStatsSheet((prev) => ({ ...prev, visible: false }))}
+      >
+        <TouchableOpacity
+          style={s.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setStatsSheet((prev) => ({ ...prev, visible: false }))}
+        >
+          <TouchableOpacity activeOpacity={1} style={s.statsSheet} onPress={() => {}}>
+            <View style={s.modalHandle} />
+            <Text style={s.modalTitle}>{statsSheet.type === 'followers' ? 'Followers' : statsSheet.type === 'following' ? 'Following' : 'Circles'}</Text>
+
+            {statsSheet.rows.length === 0 ? (
+              <View style={s.emptyListState}>
+                <Ionicons name="people-outline" size={28} color={colors.stone} />
+                <Text style={s.emptyListText}>No {statsSheet.type === 'followers' ? 'followers yet' : statsSheet.type === 'following' ? 'following yet' : 'circles yet'}.</Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={s.statsList}
+                contentContainerStyle={s.statsListContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {statsSheet.rows.map((row) => {
+                  const isCircle = statsSheet.type === 'circles';
+                  const avatar = isCircle ? (row.cover_image_url || row.cover_url || null) : row.photo_urls?.[0];
+                  const label = isCircle ? row.name : row.name || 'Cupid user';
+                  const onPressTarget = isCircle
+                    ? () => navigation?.navigate('Circles', { circleId: row.id })
+                    : () => navigation?.navigate('UserProfile', { userId: row.id });
+
+                  return (
+                    <TouchableOpacity key={isCircle ? row.id : row.id} style={s.statsRowItem} onPress={onPressTarget} activeOpacity={0.8}>
+                      <View style={s.statsAvatarWrap}>
+                        {avatar ? (
+                          <Image source={{ uri: avatar }} style={s.statsAvatar} />
+                        ) : (
+                          <View style={[s.statsAvatar, { backgroundColor: colors.fog, alignItems: 'center', justifyContent: 'center' }]}> 
+                            <Ionicons name={isCircle ? 'people' : 'person'} size={18} color={colors.stone} />
+                          </View>
+                        )}
+                      </View>
+                      <Text style={s.statsItemName}>{label}</Text>
+                      <Ionicons name="chevron-forward" size={16} color={colors.stone} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal
         visible={photoModal.visible}
         transparent
@@ -380,9 +537,15 @@ export default function ProfileScreen({ navigation }) {
       </Modal>
 
       <Animated.View style={[s.header, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={s.title}>Profile</Text>
           <Text style={s.subtitle}>Your space on Cupid</Text>
+          {updateReady ? (
+            <TouchableOpacity style={s.updateBtn} onPress={applyUpdate} activeOpacity={0.85}>
+              <Ionicons name="cloud-download-outline" size={14} color="#FFFFFF" />
+              <Text style={s.updateBtnText}>Update now</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
         <TouchableOpacity style={s.settingsBtn} onPress={() => navigation?.navigate('Settings')}>
           <Ionicons name="settings-outline" size={19} color="#FFFFFF" />
@@ -399,7 +562,7 @@ export default function ProfileScreen({ navigation }) {
         {/* Cover and profile identity */}
         <View style={s.profileCard}>
           <View style={s.mainPhoto}>
-            <Image source={{ uri: coverUrl }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+            <Image source={{ uri: coverUrl }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } contentFit="cover" />
             <LinearGradient
               colors={['transparent', 'rgba(7,7,9,0.85)']}
               style={s.mainPhotoOverlay}
@@ -421,6 +584,14 @@ export default function ProfileScreen({ navigation }) {
             </Animated.View>
             <View style={s.nameRow}>
               <Text style={s.name}>{user.username ? `@${user.username}` : user.name}</Text>
+              {user.wallet_balance_ngn > 0 ? (
+                <View style={s.walletPill}>
+                  <Ionicons name="wallet" size={12} color={colors.ember} />
+                  <Text style={s.walletPillText}>
+                    ₦{Number(user.wallet_balance_ngn).toLocaleString('en-NG')}
+                  </Text>
+                </View>
+              ) : null}
             </View>
             {user.username ? <Text style={s.fullName}>{user.name}</Text> : null}
             <Text style={s.profileMeta}>{[user.occupation || user.job_title, region || user.city].filter(Boolean).join('  •  ') || 'Tell people where you’re from'}</Text>
@@ -439,29 +610,35 @@ export default function ProfileScreen({ navigation }) {
             {/* Profile stats */}
             <View style={[s.statsRow, { marginHorizontal: 0, marginTop: 4, marginBottom: 16 }]}>
               {[
-                { label: 'Followers', value: profileStats.followers.toString() },
-                { label: 'Following', value: profileStats.following.toString() },
-                { label: 'Circles', value: profileStats.circles.toString() },
-                { label: 'Posts', value: profileStats.posts.toString() },
+                { key: 'followers', label: 'Followers', value: profileStats.followers.toString() },
+                { key: 'following', label: 'Following', value: profileStats.following.toString() },
+                { key: 'circles', label: 'Circles', value: profileStats.circles.toString() },
+                { key: 'posts', label: 'Posts', value: profileStats.posts.toString() },
               ].map((stat, i) => (
-                <Animated.View
+                <TouchableOpacity
                   key={stat.label}
-                  style={[
-                    s.statCard,
-                    {
-                      opacity: fadeAnim,
-                      transform: [{
-                        translateY: slideAnim.interpolate({
-                          inputRange: [0, 24],
-                          outputRange: [0, 12 + i * 6],
-                        }),
-                      }],
-                    },
-                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => stat.key !== 'posts' && openStatsSheet(stat.key)}
+                  style={s.statButton}
                 >
-                  <Text style={s.statValue}>{stat.value}</Text>
-                  <Text style={s.statLabel}>{stat.label}</Text>
-                </Animated.View>
+                  <Animated.View
+                    style={[
+                      s.statCard,
+                      {
+                        opacity: fadeAnim,
+                        transform: [{
+                          translateY: slideAnim.interpolate({
+                            inputRange: [0, 24],
+                            outputRange: [0, 12 + i * 6],
+                          }),
+                        }],
+                      },
+                    ]}
+                  >
+                    <Text style={s.statValue}>{stat.value}</Text>
+                    <Text style={s.statLabel}>{stat.label}</Text>
+                  </Animated.View>
+                </TouchableOpacity>
               ))}
             </View>
 
@@ -502,6 +679,27 @@ export default function ProfileScreen({ navigation }) {
                 <Ionicons name="settings-outline" size={19} color={colors.ink} />
               </TouchableOpacity>
             </View>
+
+            {/* Invite friends callout */}
+            <TouchableOpacity
+              style={s.inviteCallout}
+              onPress={() => navigation?.openReferrals?.()}
+              activeOpacity={0.85}
+            >
+              <LinearGradient
+                colors={isDark ? ['#3A0E1B', '#5C1429'] : ['#FF8A9F', '#FF4D6D']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={s.inviteCalloutInner}
+              >
+                <View style={s.inviteLeft}>
+                  <Text style={s.inviteTitle}>Invite friends, earn ₦100</Text>
+                </View>
+                <View style={s.inviteBadge}>
+                  <Ionicons name="gift" size={22} color={colors.white} />
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
 
             {/* Hobbies */}
             {hobbies.length > 0 && (
@@ -565,6 +763,12 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   },
   title: { fontSize: 28, fontWeight: '800', color: colors.ink, letterSpacing: -0.8 },
   subtitle: { fontSize: 14, color: colors.stone, marginTop: 2 },
+  updateBtn: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6,
+    marginTop: 10, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999,
+    backgroundColor: colors.ember,
+  },
+  updateBtnText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
   settingsBtn: {
     width: 44, height: 44, borderRadius: 22, backgroundColor: colors.ember,
     borderWidth: 1, borderColor: colors.ember, alignItems: 'center', justifyContent: 'center',
@@ -620,10 +824,17 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
     position: 'absolute', right: -2, bottom: 0, width: 34, height: 34, borderRadius: 17,
     backgroundColor: colors.ember, borderWidth: 3, borderColor: colors.white, alignItems: 'center', justifyContent: 'center',
   },
-  nameRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  nameRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' },
   name:     { fontSize: 34, fontWeight: '800', color: colors.ink, letterSpacing: -1.2, lineHeight: 40 },
   fullName: { fontSize: 16, fontWeight: '600', color: colors.graphite, marginBottom: 5 },
   profileMeta: { fontSize: 16, color: colors.stone, lineHeight: 23, marginBottom: 14 },
+  walletPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: isDark ? 'rgba(255, 77, 109, 0.18)' : 'rgba(255, 77, 109, 0.12)',
+  },
+  walletPillText: { fontSize: 12, fontWeight: '700', color: colors.ember },
   verifiedBadge: {
     position: 'absolute', right: 0, bottom: 3, width: 27, height: 27, borderRadius: 14, backgroundColor: colors.ember,
     borderWidth: 3, borderColor: colors.white, alignItems: 'center', justifyContent: 'center',
@@ -642,6 +853,20 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: 8, marginBottom: 24 },
   primaryAction: { flex: 1, minHeight: 46, borderRadius: 23, backgroundColor: colors.ember, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 7 },
   primaryActionText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+
+  // Referral campaign callout
+  inviteCallout: { borderRadius: 18, overflow: 'hidden', marginBottom: 24 },
+  inviteCalloutInner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 18, paddingVertical: 18,
+  },
+  inviteLeft: { flex: 1, gap: 4 },
+  inviteTitle: { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
+  inviteBadge: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center', justifyContent: 'center',
+  },
   secondaryAction: { minHeight: 46, borderRadius: 23, paddingHorizontal: 15, backgroundColor: colors.snow, borderWidth: 1, borderColor: colors.fog, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 7 },
   secondaryActionText: { color: colors.ink, fontSize: 15, fontWeight: '700' },
   iconAction: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.snow, borderWidth: 1, borderColor: colors.fog, alignItems: 'center', justifyContent: 'center' },
@@ -682,10 +907,11 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   editBtnGradient: { paddingVertical: 13, alignItems: 'center' },
   editBtnText:{ color: '#fff', fontWeight: '700', fontSize: 15 },
 
-  statsRow: { flexDirection: 'row', gap: 8, marginHorizontal: 16, marginBottom: 24 },
+  statsRow: { width: '100%', flexDirection: 'row', gap: 8, marginHorizontal: 0, marginBottom: 24 },
+  statButton: { flex: 1 },
   statCard: {
-    flex: 1, backgroundColor: colors.snow, borderRadius: 18,
-    paddingVertical: 14, paddingHorizontal: 6, alignItems: 'center', gap: 5,
+    width: '100%', flex: 1, backgroundColor: colors.snow, borderRadius: 18,
+    paddingVertical: 14, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', gap: 5,
     borderWidth: 1, borderColor: colors.fog,
   },
   statIconWrap: {
@@ -710,7 +936,7 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
     width: (W - 32 - 10) / 2, borderRadius: radius.lg, overflow: 'hidden',
     backgroundColor: colors.white, borderWidth: 1, borderColor: colors.fog, minHeight: 120,
   },
-  postImage:        { width: '100%', height: 140 },
+  postImage:        { width: '100%', maxHeight: W * 0.4, minHeight: 100, resizeMode: 'contain' },
   postCaption:      { padding: 10 },
   postCaptionOnly:  { minHeight: 100, justifyContent: 'center' },
   postCaptionText:  { fontSize: 13, color: colors.graphite, lineHeight: 19 },
@@ -723,6 +949,22 @@ const getStyles = (colors, shadow, isDark) => StyleSheet.create({
   modalSheet:   { backgroundColor: colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 40, paddingHorizontal: 16, paddingTop: 12 },
   modalHandle:  { width: 40, height: 4, backgroundColor: colors.fog, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   modalTitle:   { fontSize: 16, fontWeight: '700', color: colors.ink, marginBottom: 16, textAlign: 'center' },
+  statsSheet: {
+    width: '92%', alignSelf: 'center', backgroundColor: colors.white, borderRadius: 24, padding: 18, maxHeight: '72%',
+    borderWidth: 1, borderColor: colors.fog,
+  },
+  statsList: { maxHeight: 420 },
+  statsListContent: { gap: 10, paddingBottom: 6 },
+  statsRowItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, paddingHorizontal: 10, borderRadius: 14,
+    backgroundColor: colors.snow, borderWidth: 1, borderColor: colors.fog,
+  },
+  statsAvatarWrap: { width: 42, height: 42, borderRadius: 21, overflow: 'hidden' },
+  statsAvatar: { width: '100%', height: '100%' },
+  statsItemName: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.ink },
+  emptyListState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 24, gap: 10 },
+  emptyListText: { color: colors.stone, fontSize: 14, textAlign: 'center' },
   modalOption:  { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
   modalOptionText: { fontSize: 16, color: colors.ink, fontWeight: '500' },
 });

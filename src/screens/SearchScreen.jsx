@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -5,13 +6,11 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Image,
   TextInput,
   ActivityIndicator,
   Alert,
   Animated,
-  Platform,
-} from 'react-native';
+  Platform} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';

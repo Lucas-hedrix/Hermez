@@ -1,6 +1,7 @@
 // screens/NotificationsScreen.jsx
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Image, Animated, PanResponder, Dimensions, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Animated, PanResponder, Dimensions, Platform } from 'react-native';
+import { Image } from 'expo-image';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
@@ -8,6 +9,7 @@ import { supabase } from '../supabase/client';
 import { radius } from '../theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AnimatedSparkles from '../components/AnimatedSparkles';
+import { SkeletonFeed, SkeletonNotificationItem } from '../components/Skeleton';
 import { getPlaceholderUrl } from '../utils/placeholders';
 
 const { width: W } = Dimensions.get('window');
@@ -182,6 +184,18 @@ export default function NotificationsScreen({ navigation }) {
     }
   };
 
+  const openFeedFromNotif = (item) => {
+    const postId = item.post_id;
+    const commentId = item.comment_id || null;
+    if (postId && navigation.openFeedPost) {
+      navigation.openFeedPost(postId, commentId);
+    } else if (navigation.switchTab) {
+      navigation.switchTab('Feed');
+    } else if (item.user) {
+      navigation.navigate('UserProfile', { userId: item.user.id });
+    }
+  };
+
   const renderItem = ({ item }) => {
     let content = null;
     
@@ -216,9 +230,9 @@ export default function NotificationsScreen({ navigation }) {
         <TouchableOpacity style={s.card} onPress={() => item.user && navigation.navigate('UserProfile', { userId: item.user.id })} activeOpacity={1}>
           <View style={s.avatarBox}>
             {item.user?.photo_urls?.[0] ? (
-              <Image source={{ uri: item.user.photo_urls[0] }} style={StyleSheet.absoluteFillObject} />
+              <Image source={{ uri: item.user.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
             ) : (
-              <Image source={{ uri: getPlaceholderUrl(item.user?.name) }} style={StyleSheet.absoluteFillObject} />
+              <Image source={{ uri: getPlaceholderUrl(item.user?.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
             )}
           </View>
           <View style={s.cardBody}>
@@ -275,7 +289,7 @@ export default function NotificationsScreen({ navigation }) {
         <TouchableOpacity style={s.card} onPress={() => item.user && navigation.navigate('Match', { otherUser: item.user })} activeOpacity={1}>
           <View style={[s.iconBox, { backgroundColor: colors.ember + '20', overflow: 'hidden' }]}>
             {item.user?.photo_urls?.[0] ? (
-              <Image source={{ uri: item.user.photo_urls[0] }} style={StyleSheet.absoluteFillObject} />
+              <Image source={{ uri: item.user.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
             ) : (
               <Ionicons name="heart" size={20} color={colors.ember} />
             )}
@@ -289,10 +303,10 @@ export default function NotificationsScreen({ navigation }) {
       );
     } else if (item.type === 'like') {
       content = (
-        <TouchableOpacity style={s.card} onPress={() => item.user && navigation.navigate('UserProfile', { userId: item.user.id })} activeOpacity={1}>
+        <TouchableOpacity style={s.card} onPress={() => openFeedFromNotif(item)} activeOpacity={1}>
           <View style={[s.iconBox, { backgroundColor: colors.ember + '20', overflow: 'hidden' }]}>
             {item.user?.photo_urls?.[0] ? (
-              <Image source={{ uri: item.user.photo_urls[0] }} style={StyleSheet.absoluteFillObject} />
+              <Image source={{ uri: item.user.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
             ) : (
               <Ionicons name="heart" size={20} color={colors.ember} />
             )}
@@ -306,21 +320,41 @@ export default function NotificationsScreen({ navigation }) {
           </View>
         </TouchableOpacity>
       );
-    } else if (item.type === 'comment') {
+    } else if (item.type === 'comment' || item.type === 'mention') {
+      const isMention = item.type === 'mention';
       content = (
-        <TouchableOpacity style={s.card} onPress={() => item.user && navigation.navigate('UserProfile', { userId: item.user.id })} activeOpacity={1}>
+        <TouchableOpacity style={s.card} onPress={() => openFeedFromNotif(item)} activeOpacity={1}>
           <View style={[s.iconBox, { backgroundColor: colors.ember + '20', overflow: 'hidden' }]}>
             {item.user?.photo_urls?.[0] ? (
-              <Image source={{ uri: item.user.photo_urls[0] }} style={StyleSheet.absoluteFillObject} />
+              <Image source={{ uri: item.user.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
             ) : (
-              <Ionicons name="chatbubble" size={20} color={colors.ember} />
+              <Ionicons name={isMention ? 'at' : 'chatbubble'} size={20} color={colors.ember} />
             )}
             <View style={{ position: 'absolute', bottom: -2, right: -2, backgroundColor: colors.white, borderRadius: 10, padding: 2 }}>
-              <Ionicons name="chatbubble" size={12} color={colors.ember} />
+              <Ionicons name={isMention ? 'at' : 'chatbubble'} size={12} color={colors.ember} />
             </View>
           </View>
           <View style={s.cardBody}>
-            <Text style={s.title}><Text style={s.bold}>{item.user?.name || 'Someone'}</Text> commented on your post</Text>
+            <Text style={s.title}>
+              {isMention ? (
+                <><Text style={s.bold}>{item.user?.name || 'Someone'}</Text> mentioned you</>
+              ) : (
+                <><Text style={s.bold}>{item.user?.name || 'Someone'}</Text> commented on your post</>
+              )}
+            </Text>
+            <Text style={s.desc}>{item.message}</Text>
+            <Text style={s.time}>{timeAgo(item.created_at)}</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    } else if (item.type === 'post' || (item.type === 'update' && item.post_id)) {
+      content = (
+        <TouchableOpacity style={s.card} onPress={() => openFeedFromNotif(item)} activeOpacity={1}>
+          <View style={[s.iconBox, { backgroundColor: colors.gold + '20' }]}>
+            <Ionicons name="newspaper-outline" size={20} color={colors.gold} />
+          </View>
+          <View style={s.cardBody}>
+            <Text style={s.title}>{item.title || 'New Post!'}</Text>
             <Text style={s.desc}>{item.message}</Text>
             <Text style={s.time}>{timeAgo(item.created_at)}</Text>
           </View>
@@ -331,7 +365,7 @@ export default function NotificationsScreen({ navigation }) {
     if (!content) return null;
 
     // Determine if it is clickable based on item.type
-    const isClickable = item.type !== 'update' && item.type !== 'circle_promotion';
+    const isClickable = (item.type !== 'update' || !!item.post_id) && item.type !== 'circle_promotion';
 
     const CardContent = (
       <BlurView intensity={75} tint={isDark ? "dark" : "light"} style={s.cardWrapper}>
@@ -367,9 +401,7 @@ export default function NotificationsScreen({ navigation }) {
       </View>
 
       {loading ? (
-        <View style={s.center}>
-          <AnimatedSparkles size={48} color={colors.ember} />
-        </View>
+        <SkeletonFeed itemCount={4} ItemComponent={SkeletonNotificationItem} />
       ) : (
         <FlatList
           data={notifications}

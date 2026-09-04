@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Image,
   Alert,
   Animated,
   PanResponder,
@@ -18,9 +17,16 @@ import {
   ActivityIndicator,
   LayoutAnimation,
   ImageBackground,
-  ScrollView,
-} from 'react-native';
-import { Video, Audio } from 'expo-av';
+  ScrollView} from 'react-native';
+import {
+  useAudioPlayer,
+  useAudioRecorder,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+  RecordingPresets,
+} from 'expo-audio';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { Image as ExpoImage } from 'expo-image';
 import { deleteAsync } from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,11 +35,73 @@ import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
 import { sendMessageNotification } from '../utils/notifications';
 import { resolveFriendshipForChat } from '../services/sparks';
-import { pickPhotoAsset, uploadPhotoAsset } from '../supabase/storage';
+import { pickChatMediaAsset, uploadChatMediaAsset } from '../supabase/storage';
 import { getPlaceholderUrl } from '../utils/placeholders';
 import { setChatPreview } from '../utils/chatPreviewStore';
+import AttachmentSheet from '../components/AttachmentSheet';
+import GiphyPicker from '../components/GiphyPicker';
+import { GIPHY_CONTENT_TYPES, trackGiphyAction } from '../services/giphy';
 
 const { width: W } = Dimensions.get('window');
+
+// Replaces the old `<Video>` component from expo-av. expo-video's API is
+// hook-based: you create a player with useVideoPlayer(source), then hand
+// the player to <VideoView>. `autoplay` mirrors the old `shouldPlay`
+// prop. nativeControls + resizeMode behave the same as the old
+// `useNativeControls` / `resizeMode` props. The hook handles cleanup
+// when the component unmounts.
+function ChatVideo({ uri, style, resizeMode = 'contain', autoplay = false, nativeControls = true }) {
+  const player = useVideoPlayer({ uri }, (p) => {
+    p.loop = false;
+  });
+  return (
+    <VideoView
+      player={player}
+      style={style}
+      nativeControls={nativeControls}
+      contentFit={resizeMode}
+      allowsFullscreen
+      allowsPictureInPicture
+    />
+  );
+}
+
+async function enrichPostShareMessages(messages) {
+  const postIds = [...new Set(
+    messages.filter((m) => m.type === 'post_share' && m.post_id).map((m) => m.post_id),
+  )];
+  if (postIds.length === 0) return messages;
+
+  const { data: posts } = await supabase
+    .from('posts')
+    .select('id, caption, image_url, post_type, user_id')
+    .in('id', postIds);
+
+  const postsMap = new Map((posts ?? []).map((p) => [p.id, p]));
+  const userIds = [...new Set((posts ?? []).map((p) => p.user_id).filter(Boolean))];
+
+  let usersMap = new Map();
+  if (userIds.length > 0) {
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, name, photo_urls')
+      .in('id', userIds);
+    usersMap = new Map((users ?? []).map((u) => [u.id, u]));
+  }
+
+  return messages.map((m) => {
+    if (m.type !== 'post_share' || !m.post_id) return m;
+    const post = postsMap.get(m.post_id);
+    if (!post) return m;
+    return {
+      ...m,
+      shared_post: {
+        ...post,
+        author: usersMap.get(post.user_id) ?? null,
+      },
+    };
+  });
+}
 
 const REPORT_REASONS = [
   'Fake profile', 'Harassment', 'Underage user', 'Scam or fraud',
@@ -73,16 +141,16 @@ function buildWaveform(peaks, buckets = 40) {
   return out;
 }
 
-// Playback audio session — allowsRecordingIOS:false is what routes sound to the
+// Playback audio session — allowsRecording:false is what routes sound to the
 // LOUD main speaker instead of the quiet earpiece. Must be set after any
 // recording, or sent voice notes play back barely audibly on iOS.
 async function setPlaybackAudioMode() {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      playThroughEarpieceAndroid: false,
-      staysActiveInBackground: false,
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldRouteThroughEarpiece: false,
+      shouldPlayInBackground: false,
     });
   } catch (e) {}
 }
@@ -138,71 +206,48 @@ function AudioWaveform({ progress, isMe, colors, onSeek, waveform }) {
 }
 
 function AudioBubble({ uri, s, colors, isMe, waveform }) {
-  const [sound, setSound] = useState(null);
+  // useAudioPlayer replaces the old `Audio.Sound.createAsync` +
+  // manual onStatus subscription. The hook loads the clip
+  // automatically and exposes .play()/.pause()/.seekTo() plus a
+  // playbackStatusUpdate event we subscribe to for progress. The
+  // hook also handles release() on unmount, so we don't need the
+  // isMounted ref dance.
+  const player = useAudioPlayer({ uri });
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
-  const isMounted = useRef(true);
 
-  // Load the clip up-front (without playing) so its length is visible before the
-  // recipient taps play, and so scrubbing works on the first touch.
   useEffect(() => {
-    isMounted.current = true;
-    let created = null;
-
-    const onStatus = (status) => {
-      if (!status.isLoaded) return;
-      if (status.durationMillis > 0) {
-        setDuration(status.durationMillis);
-        setProgress(status.positionMillis / status.durationMillis);
+    const sub = player.addListener('playbackStatusUpdate', (status) => {
+      const dur = status.duration ?? 0;       // seconds
+      const pos = status.currentTime ?? 0;   // seconds
+      if (dur > 0) {
+        setDuration(Math.round(dur * 1000));
+        setProgress(pos / dur);
       }
-      setIsPlaying(status.isPlaying);
+      setIsPlaying(status.playing);
       if (status.didJustFinish) {
         setIsPlaying(false);
         setProgress(0);
       }
-    };
-
-    (async () => {
-      try {
-        const { sound: newSound, status } = await Audio.Sound.createAsync(
-          { uri },
-          { shouldPlay: false, progressUpdateIntervalMillis: 250 },
-          onStatus
-        );
-        created = newSound;
-        if (!isMounted.current) {
-          await newSound.unloadAsync();
-          return;
-        }
-        if (status.isLoaded && status.durationMillis > 0) {
-          setDuration(status.durationMillis);
-        }
-        setSound(newSound);
-      } catch (e) {
-        // ignore — the bubble just won't be playable
-      }
-    })();
-
-    return () => {
-      isMounted.current = false;
-      if (created) { created.unloadAsync().catch(() => {}); }
-    };
-  }, [uri]);
+    });
+    return () => sub.remove();
+  }, [player]);
 
   const togglePlayback = async () => {
-    if (!sound) return; // still loading
+    if (!player) return; // still loading
     if (isPlaying) {
-      await sound.pauseAsync();
+      player.pause();
     } else {
       // Ensure the loud main speaker is active (a prior recording may have left
       // the session routed to the earpiece).
       await setPlaybackAudioMode();
       if (progress >= 0.98) {
-        await sound.setPositionAsync(0);
+        player.seekTo(0);
         setProgress(0);
       }
-      await sound.playAsync();
+      player.play();
     }
   };
 
@@ -224,15 +269,15 @@ function AudioBubble({ uri, s, colors, isMe, waveform }) {
         colors={colors}
         waveform={waveform}
         onSeek={async (p) => {
-          if (sound && duration > 0) {
+          if (player && duration > 0) {
             setProgress(p);
-            await sound.setPositionAsync(p * duration);
+            player.seekTo((p * duration) / 1000); // player.seekTo takes seconds
             if (!isPlaying) {
-              await sound.playAsync();
+              player.play();
               setIsPlaying(true);
             }
           }
-        }} 
+        }}
       />
       
       {duration > 0 && (
@@ -248,68 +293,43 @@ function AudioBubble({ uri, s, colors, isMe, waveform }) {
 // duration, and delete the take before committing to send. Reuses the same
 // load/play/seek logic as AudioBubble but styled for the input bar.
 function AudioPreviewPlayer({ uri, colors, waveform, onDelete }) {
-  const [sound, setSound] = useState(null);
+  // Same pattern as AudioBubble: useAudioPlayer replaces the old
+  // Audio.Sound.createAsync + onStatus dance.
+  const player = useAudioPlayer({ uri });
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
-  const isMounted = useRef(true);
 
   useEffect(() => {
-    isMounted.current = true;
-    let created = null;
-
-    const onStatus = (status) => {
-      if (!status.isLoaded) return;
-      if (status.durationMillis > 0) {
-        setDuration(status.durationMillis);
-        setProgress(status.positionMillis / status.durationMillis);
+    const sub = player.addListener('playbackStatusUpdate', (status) => {
+      const dur = status.duration ?? 0;
+      const pos = status.currentTime ?? 0;
+      if (dur > 0) {
+        setDuration(Math.round(dur * 1000));
+        setProgress(pos / dur);
       }
-      setIsPlaying(status.isPlaying);
+      setIsPlaying(status.playing);
       if (status.didJustFinish) {
         setIsPlaying(false);
         setProgress(0);
       }
-    };
-
-    (async () => {
-      try {
-        const { sound: newSound, status } = await Audio.Sound.createAsync(
-          { uri },
-          { shouldPlay: false, progressUpdateIntervalMillis: 200 },
-          onStatus
-        );
-        created = newSound;
-        if (!isMounted.current) {
-          await newSound.unloadAsync();
-          return;
-        }
-        if (status.isLoaded && status.durationMillis > 0) {
-          setDuration(status.durationMillis);
-        }
-        setSound(newSound);
-      } catch (e) {
-        // ignore — the preview just won't be playable
-      }
-    })();
-
-    return () => {
-      isMounted.current = false;
-      if (created) { created.unloadAsync().catch(() => {}); }
-    };
-  }, [uri]);
+    });
+    return () => sub.remove();
+  }, [player]);
 
   const togglePlayback = async () => {
-    if (!sound) return;
+    if (!player) return;
     if (isPlaying) {
-      await sound.pauseAsync();
+      player.pause();
     } else {
       // A take was just recorded — make sure we're back on the loud speaker.
       await setPlaybackAudioMode();
       if (progress >= 0.98) {
-        await sound.setPositionAsync(0);
+        player.seekTo(0);
         setProgress(0);
       }
-      await sound.playAsync();
+      player.play();
     }
   };
 
@@ -341,11 +361,11 @@ function AudioPreviewPlayer({ uri, colors, waveform, onDelete }) {
           colors={colors}
           waveform={waveform}
           onSeek={async (p) => {
-            if (sound && duration > 0) {
+            if (player && duration > 0) {
               setProgress(p);
-              await sound.setPositionAsync(p * duration);
+              player.seekTo((p * duration) / 1000); // player.seekTo takes seconds
               if (!isPlaying) {
-                await sound.playAsync();
+                player.play();
                 setIsPlaying(true);
               }
             }
@@ -425,7 +445,7 @@ function MessageTicks({ item, isMe, colors }) {
   return <Ionicons name="checkmark-done" size={14} color={sentColor} />;
 }
 
-function Bubble({ item, messages, myId, onPressShare, onPressMedia, onLongPressMessage, onReply, onScrollToMessage, s, colors, isHighlighted, chatFont }) {
+function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onReply, onScrollToMessage, s, colors, isHighlighted, chatFont }) {
   const isMe = item.sender_id === myId;
   const pan = useRef(new Animated.ValueXY()).current;
   const highlightAnim = useRef(new Animated.Value(0)).current;
@@ -553,6 +573,7 @@ function Bubble({ item, messages, myId, onPressShare, onPressMedia, onLongPressM
   let inner = null;
 
   const isAudioMsg = item.type === 'audio' || (item.media_url && (item.media_url.includes('.m4a') || item.media_url.includes('.mp3') || item.media_url.includes('.wav') || item.media_url.includes('.aac')));
+  const isGiphyMsg = item.type === GIPHY_CONTENT_TYPES.GIF || item.type === GIPHY_CONTENT_TYPES.STICKER;
 
   if (item.type === 'date_header') {
     return (
@@ -577,35 +598,38 @@ function Bubble({ item, messages, myId, onPressShare, onPressMedia, onLongPressM
     const isVideo = item.media_url?.includes('.mp4') || item.media_url?.includes('.mov');
     inner = (
         <TouchableOpacity
-          style={[s.bubble, s.mediaBubble, isMe ? s.bubbleMe : s.bubbleThem]}
-          onPress={() => onPressMedia(item.media_url, isVideo)}
+          style={[s.bubble, s.mediaBubble, isGiphyMsg ? s.giphyBubble : (isMe ? s.bubbleMe : s.bubbleThem)]}
+          onPress={() => onPressMedia(item.media_url, isVideo, isGiphyMsg)}
           onLongPress={handleLongPress}
           activeOpacity={0.8}
         >
           {renderReplySnippet()}
           {isVideo ? (
-            <Video
-              source={{ uri: item.media_url }}
+            <ChatVideo
+              uri={item.media_url}
               style={s.mediaContent}
-              resizeMode="cover"
-              useNativeControls
-              shouldPlay={false}
+              contentFit="contain"
+              autoplay={false}
+            />
+          ) : isGiphyMsg ? (
+            <ExpoImage
+              source={{ uri: item.media_url }}
+              style={s.giphyMediaContent}
+              contentFit="contain"
+              cachePolicy="none"
+              accessibilityLabel={item.type === GIPHY_CONTENT_TYPES.STICKER ? 'GIPHY sticker' : 'GIPHY GIF'}
             />
           ) : (
-            <Image source={{ uri: item.media_url }} style={s.mediaContent} />
+            <Image source={{ uri: item.media_url }} style={s.mediaContent} contentFit="contain" />
           )}
           {item.text ? <Text style={[s.bubbleText, isMe && s.bubbleTextMe, { marginTop: 6, fontFamily }]}>{item.text}</Text> : null}
           {renderMeta()}
         </TouchableOpacity>
     );
   } else if (item.type === 'post_share') {
+    const shared = item.shared_post;
     inner = (
-        <TouchableOpacity
-          style={[s.bubbleShare, isMe ? s.bubbleMe : s.bubbleThem]}
-          onPress={() => onPressShare(item)}
-          onLongPress={handleLongPress}
-          activeOpacity={0.8}
-        >
+        <View style={[s.bubbleShare, isMe ? s.bubbleMe : s.bubbleThem]}>
           {renderReplySnippet()}
           <View style={s.shareHeader}>
             <Ionicons
@@ -618,11 +642,44 @@ function Bubble({ item, messages, myId, onPressShare, onPressMedia, onLongPressM
             </Text>
           </View>
 
-          <Text style={[s.bubbleText, isMe && s.bubbleTextMe, { fontFamily }]}>
-            Tap to view profile
-          </Text>
+          {shared ? (
+            <View style={s.sharePostCard}>
+              <View style={s.sharePostAuthorRow}>
+                <View style={s.sharePostAvatar}>
+                  {shared.author?.photo_urls?.[0] ? (
+                    <Image source={{ uri: shared.author.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
+                  ) : (
+                    <Image
+                      source={{ uri: getPlaceholderUrl(shared.author?.name) }}
+                      style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
+                    />
+                  )}
+                </View>
+                <Text style={[s.sharePostAuthor, isMe && s.bubbleTextMe]} numberOfLines={1}>
+                  {shared.author?.name || 'Someone'}
+                </Text>
+              </View>
+              {shared.caption ? (
+                <Text style={[s.sharePostCaption, isMe && s.bubbleTextMe, { fontFamily }]} numberOfLines={5}>
+                  {shared.caption}
+                </Text>
+              ) : null}
+              {shared.image_url ? (
+                <TouchableOpacity
+                  onPress={() => onPressMedia(shared.image_url, false)}
+                  activeOpacity={0.85}
+                >
+                  <Image source={{ uri: shared.image_url }} style={s.sharePostImage} contentFit="cover" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : (
+            <Text style={[s.bubbleText, isMe && s.bubbleTextMe, { fontFamily }]}>
+              This post is no longer available.
+            </Text>
+          )}
           {renderMeta()}
-        </TouchableOpacity>
+        </View>
     );
   } else if (isAudioMsg) {
     inner = (
@@ -695,6 +752,7 @@ export default function FriendChatScreen({ route, navigation }) {
   const [viewMedia, setViewMedia] = useState(null);
   const [selectedMedia, setSelectedMedia] = useState(null);
   const [attachmentSheetVisible, setAttachmentSheetVisible] = useState(false);
+  const [giphyPickerVisible, setGiphyPickerVisible] = useState(false);
   const [optionsSheetVisible, setOptionsSheetVisible] = useState(false);
   const [optionsSheetMode, setOptionsSheetMode] = useState('menu'); // 'menu' | 'report'
   const [friendIsTyping, setFriendIsTyping] = useState(false);
@@ -719,14 +777,26 @@ export default function FriendChatScreen({ route, navigation }) {
   const peaksRef = useRef([]);                       // all captured 0–1 peaks for this take
   const hasAudioPermissionRef = useRef(false);       // cached so we don't re-request on every press
 
+  // SDK 57: useAudioRecorder replaces the old Audio.Recording.createAsync
+  // pattern. We create the recorder ONCE at component mount; the hook
+  // handles the native lifecycle for us and exposes .record()/.stop().
+  // RecordingPresets.HIGH_QUALITY does not enable metering by default,
+  // so we spread it and set isMeteringEnabled: true so the live meter
+  // gets dBFS levels from getStatus().metering.
+  const recorder = useAudioRecorder({
+    ...RecordingPresets.HIGH_QUALITY,
+    isMeteringEnabled: true,
+  });
+  const meterIntervalRef = useRef(null);
+
   // Ask for mic permission up-front so the first press-and-hold isn't interrupted
   // by the OS prompt (which would drop the user's first voice note), and set the
   // loud-speaker playback session so incoming notes are audible immediately.
   useEffect(() => {
     (async () => {
       try {
-        const perm = await Audio.requestPermissionsAsync();
-        hasAudioPermissionRef.current = perm.status === 'granted';
+        const perm = await requestRecordingPermissionsAsync();
+        hasAudioPermissionRef.current = perm.granted === true || perm.status === 'granted';
       } catch (e) {}
       setPlaybackAudioMode();
     })();
@@ -735,8 +805,12 @@ export default function FriendChatScreen({ route, navigation }) {
   useEffect(() => {
     return () => {
       clearInterval(recordingTimerRef.current);
+      clearInterval(meterIntervalRef.current);
       if (recordingRef.current) {
-        try { recordingRef.current.stopAndUnloadAsync(); } catch(e) {}
+        const { recorder: r } = recordingRef.current.recorder
+          ? recordingRef.current
+          : { recorder: recordingRef.current };
+        try { r.stop(); } catch (e) {}
       }
     };
   }, []);
@@ -1041,22 +1115,23 @@ export default function FriendChatScreen({ route, navigation }) {
     const loadedMessages = (data ?? []).filter(
       (m) => !m.deleted_by || !m.deleted_by.includes(myUid)
     );
+    const enrichedMessages = await enrichPostShareMessages(loadedMessages);
 
-    if (loadedMessages.length < PAGE_SIZE) {
+    if (enrichedMessages.length < PAGE_SIZE) {
       setHasMore(false);
     }
 
     setMessages(prev => {
       if (isLoadMore) {
-        return [...prev, ...loadedMessages]; 
+        return [...prev, ...enrichedMessages]; 
       }
-      return loadedMessages;
+      return enrichedMessages;
     });
 
     if (!isLoadMore) {
-      setSentPendingCount(loadedMessages.filter((m) => m.sender_id === myUid).length);
+      setSentPendingCount(enrichedMessages.filter((m) => m.sender_id === myUid).length);
       setLoading(false);
-      await markIncomingMessagesAsRead(loadedMessages);
+      await markIncomingMessagesAsRead(enrichedMessages);
     }
 
     setPage(currentPage);
@@ -1098,13 +1173,16 @@ export default function FriendChatScreen({ route, navigation }) {
             return;
           }
 
+          const enriched = await enrichPostShareMessages([msg]);
+          const enrichedMsg = enriched[0] ?? msg;
+
           setMessages((prev) => {
-            const exists = prev.find((m) => m.id === msg.id);
+            const exists = prev.find((m) => m.id === enrichedMsg.id);
             if (exists) return prev;
-            return [msg, ...prev];
+            return [enrichedMsg, ...prev];
           });
 
-          await markIncomingMessagesAsRead([msg]);
+          await markIncomingMessagesAsRead([enrichedMsg]);
         }
       )
       .on(
@@ -1212,7 +1290,9 @@ export default function FriendChatScreen({ route, navigation }) {
       return;
     }
     try {
-      await rec.stopAndUnloadAsync();
+      const { recorder: r } = rec.recorder ? rec : { recorder: rec };
+      try { await r.stop(); } catch (e) {}
+      clearInterval(meterIntervalRef.current);
     } catch (e) {}
     await setPlaybackAudioMode();
   };
@@ -1228,7 +1308,7 @@ export default function FriendChatScreen({ route, navigation }) {
         try { await deleteAsync(uri, { idempotent: true }); } catch (e) {}
       }
     try {
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
     } catch (e) {}
   };
 
@@ -1280,10 +1360,26 @@ export default function FriendChatScreen({ route, navigation }) {
       return;
     }
 
-    const asset = await pickPhotoAsset();
-    if (asset) {
-      setSelectedMedia(asset);
+    try {
+      const asset = await pickChatMediaAsset();
+      if (asset) {
+        setSelectedMedia(asset);
+      }
+    } catch (error) {
+      console.error('Could not open media picker:', error);
+      Alert.alert('Media unavailable', 'Could not open your photo library. Please try again.');
     }
+  };
+
+  const openGiphyPicker = () => {
+    if (msgLimitHit) {
+      Alert.alert(
+        'Message limit reached',
+        `You can send up to ${MAX_PENDING_MSGS} messages until ${otherUser?.name ?? 'they'} accepts your request.`
+      );
+      return;
+    }
+    setGiphyPickerVisible(true);
   };
 
   const sendTypingStatus = useCallback((isTyping) => {
@@ -1322,7 +1418,7 @@ export default function FriendChatScreen({ route, navigation }) {
     wantsToStop.current = false;
 
     // Optimistic UI: flip to the recording bar instantly so the press feels
-    // immediate, even though createAsync() below takes a beat to spin up the mic.
+    // immediate, even though the mic takes a beat to spin up below.
     setIsRecording(true);
     setRecordingDuration(0);
     recordingSecondsRef.current = 0;
@@ -1330,84 +1426,76 @@ export default function FriendChatScreen({ route, navigation }) {
     setLiveLevels([]);
 
     try {
-      if (recordingRef.current) {
-        try { await recordingRef.current.stopAndUnloadAsync(); } catch (e) {}
-        recordingRef.current = null;
-      }
-
       // Use the cached grant from mount; only re-prompt if we don't have it yet.
       if (!hasAudioPermissionRef.current) {
-        const perm = await Audio.requestPermissionsAsync();
-        hasAudioPermissionRef.current = perm.status === 'granted';
+        const perm = await requestRecordingPermissionsAsync();
+        hasAudioPermissionRef.current = perm.granted === true || perm.status === 'granted';
       }
 
       if (hasAudioPermissionRef.current) {
         // Recording session: route input to the mic. shouldDuckAndroid lowers
         // other apps' audio rather than stopping us; interruption modes keep the
         // session alive if a notification sound fires mid-record.
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
-          staysActiveInBackground: false,
+        await setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
+          interruptionMode: 'duckOthers',
+          shouldRouteThroughEarpiece: false,
+          shouldPlayInBackground: false,
         });
 
         peaksRef.current = [];
         setLiveLevels([]);
 
-        // HIGH_QUALITY preset has isMeteringEnabled: true — we read status.metering
-        // (dBFS) on each update, convert to a 0–1 level, drive the live meter, and
-        // accumulate peaks to persist as the note's waveform. The floor is raised
-        // to -50 dBFS so normal speech fills more of the range (looks/feels louder).
-        const onRecStatus = (status) => {
-          if (!status.isRecording || typeof status.metering !== 'number') return;
-          // -50 dBFS (quiet room) → 0, 0 dBFS (loudest) → 1.
-          const level = Math.max(0, Math.min(1, (status.metering + 50) / 50));
-          peaksRef.current.push(level);
-          setLiveLevels((prev) => {
-            const next = prev.length >= LIVE_BARS ? prev.slice(prev.length - LIVE_BARS + 1) : prev;
-            return [...next, level];
-          });
-        };
-
-        // Right after a preview take is discarded, the audio session can still be
-        // mid-teardown from the playback Sound — the first createAsync then throws
-        // and the old code dead-ended here. Reset the record mode and retry once.
-        let newRecording;
+        // SDK 57: prepare then record. No 'metering' event exists on
+        // AudioRecorder; instead we poll getStatus() for the metering dBFS.
         try {
-          ({ recording: newRecording } = await Audio.Recording.createAsync(
-            Audio.RecordingOptionsPresets.HIGH_QUALITY,
-            onRecStatus,
-            120 // metering update interval (ms)
-          ));
+          await recorder.prepareToRecordAsync();
+          recorder.record();
         } catch (createErr) {
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-            staysActiveInBackground: false,
+          // After discarding a preview, the session may still be mid-teardown.
+          // Reset audio mode and retry once.
+          await setAudioModeAsync({
+            allowsRecording: true,
+            playsInSilentMode: true,
+            interruptionMode: 'duckOthers',
+            shouldRouteThroughEarpiece: false,
+            shouldPlayInBackground: false,
           });
-          ({ recording: newRecording } = await Audio.Recording.createAsync(
-            Audio.RecordingOptionsPresets.HIGH_QUALITY,
-            onRecStatus,
-            120
-          ));
+          await recorder.prepareToRecordAsync();
+          recorder.record();
         }
+
+        // Poll metering at ~120ms for live level visualisation.
+        meterIntervalRef.current = setInterval(() => {
+          try {
+            const status = recorder.getStatus();
+            const dbfs = status?.metering;
+            if (typeof dbfs !== 'number') return;
+            // -50 dBFS (quiet room) → 0, 0 dBFS (loudest) → 1.
+            const level = Math.max(0, Math.min(1, (dbfs + 50) / 50));
+            peaksRef.current.push(level);
+            setLiveLevels((prev) => {
+              const next = prev.length >= LIVE_BARS ? prev.slice(prev.length - LIVE_BARS + 1) : prev;
+              return [...next, level];
+            });
+          } catch (e) {}
+        }, 120);
 
         // The user released (or cancelled) before the mic finished spinning up —
         // tear down immediately instead of leaving a zombie recording running.
         if (wantsToStop.current) {
-          try { await newRecording.stopAndUnloadAsync(); } catch (e) {}
+          try { await recorder.stop(); } catch (e) {}
+          clearInterval(meterIntervalRef.current);
           setIsRecording(false);
           setLiveLevels([]);
           await setPlaybackAudioMode();
           return;
         }
 
-        recordingRef.current = newRecording;
-        setRecording(newRecording);
+        // Keep a handle so stopRecording() / cancelRecording() can reach the recorder.
+        recordingRef.current = { recorder };
+        setRecording(recorder);
 
         recordingTimerRef.current = setInterval(() => {
           recordingSecondsRef.current += 1;
@@ -1447,31 +1535,32 @@ export default function FriendChatScreen({ route, navigation }) {
     }
 
     try {
-      const status = await rec.getStatusAsync();
-      await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
+      // rec is now { recorder } from startRecording. Unwrap defensively.
+      const { recorder: r } = rec.recorder ? rec : { recorder: rec };
+
+      await r.stop();
+      clearInterval(meterIntervalRef.current);
+      const durationMs = Math.round((r.currentTime ?? 0) * 1000);
+      const uri = r.uri;
       const waveform = buildWaveform(peaksRef.current);
       setLiveLevels([]);
-      if (status.durationMillis < 200) {
+      if (durationMs < 200) {
         // Too short to be a real note — just reset the speaker and bail.
         await setPlaybackAudioMode();
         return;
       }
 
-      const media = { uri, type: 'audio', mimeType: 'audio/mp4', waveform, duration: status.durationMillis };
+      const media = { uri, type: 'audio', mimeType: 'audio/mp4', waveform, duration: durationMs };
       if (sendNow) {
-        // send() inserts the optimistic bubble synchronously and uploads in the
-        // background. Fire it first, then restore the loud speaker without
-        // blocking so the note pops into the thread instantly.
         sendRef.current?.(media);
         setPlaybackAudioMode();
       } else {
-        // Preview path: switch to the loud speaker so playback is audible.
         await setPlaybackAudioMode();
         setSelectedMedia(media);
       }
     } catch (err) {
       console.error('Failed to stop recording', err);
+      clearInterval(meterIntervalRef.current);
       await setPlaybackAudioMode();
     }
   };
@@ -1498,13 +1587,16 @@ export default function FriendChatScreen({ route, navigation }) {
 
     const tempId = 'temp-' + Date.now();
     let type = 'text';
-    let isVid = false;
     if (activeMedia) {
-      if (activeMedia.type === 'audio') {
+      if (activeMedia.isGiphy) {
+        type = activeMedia.type;
+      } else if (activeMedia.type === 'audio') {
         type = 'audio';
+      } else if (activeMedia.type === 'video') {
+        type = 'video';
       } else {
         const uriStr = activeMedia.uri.toLowerCase();
-        isVid = uriStr.includes('.mp4') || uriStr.includes('.mov') || activeMedia.type === 'video';
+        const isVid = uriStr.includes('.mp4') || uriStr.includes('.mov');
         type = isVid ? 'video' : 'image';
       }
     }
@@ -1527,7 +1619,14 @@ export default function FriendChatScreen({ route, navigation }) {
 
     setMessages((prev) => [tempMsg, ...prev]);
     if (chatId) {
-      const previewText = trimmed || (type === 'audio' ? 'Voice message' : type === 'image' ? 'Photo' : type === 'video' ? 'Video' : '');
+      const previewText = trimmed || (
+        type === 'audio' ? 'Voice message'
+          : type === 'image' ? 'Photo'
+            : type === 'video' ? 'Video'
+              : type === GIPHY_CONTENT_TYPES.GIF ? 'GIF'
+                : type === GIPHY_CONTENT_TYPES.STICKER ? 'Sticker'
+                  : ''
+      );
 
       setChatPreview(chatId, {
         id: tempId,
@@ -1554,7 +1653,9 @@ export default function FriendChatScreen({ route, navigation }) {
     setUploadingMedia(true);
     let upText = null;
     if (mediaToUpload) {
-      if (type === 'audio') upText = 'Sending voice note...';
+      if (type === GIPHY_CONTENT_TYPES.GIF) upText = 'Sending GIF...';
+      else if (type === GIPHY_CONTENT_TYPES.STICKER) upText = 'Sending sticker...';
+      else if (type === 'audio') upText = 'Sending voice note...';
       else if (type === 'video') upText = 'Uploading video...';
       else upText = 'Uploading image...';
       setUploadProgressText(upText);
@@ -1567,7 +1668,11 @@ export default function FriendChatScreen({ route, navigation }) {
 
     let finalMediaUrl = null;
     if (mediaToUpload) {
-      finalMediaUrl = await uploadPhotoAsset(myUid, mediaToUpload);
+      // GIPHY requires content to be rendered from the direct URL it returns;
+      // do not copy it into Supabase Storage or rewrite the URL.
+      finalMediaUrl = mediaToUpload.isGiphy
+        ? mediaToUpload.uri
+        : await uploadChatMediaAsset(myUid, mediaToUpload);
       if (!finalMediaUrl) {
         setUploadingMedia(false);
         setUploadProgressText(null);
@@ -1601,8 +1706,19 @@ export default function FriendChatScreen({ route, navigation }) {
       return;
     }
 
+    if (mediaToUpload?.isGiphy) {
+      trackGiphyAction(mediaToUpload, 'onsent', myUid);
+    }
+
     if (chatId && data) {
-      const previewText = data.text || (data.type === 'audio' ? 'Voice message' : data.type === 'image' ? 'Photo' : data.type === 'video' ? 'Video' : '');
+      const previewText = data.text || (
+        data.type === 'audio' ? 'Voice message'
+          : data.type === 'image' ? 'Photo'
+            : data.type === 'video' ? 'Video'
+              : data.type === GIPHY_CONTENT_TYPES.GIF ? 'GIF'
+                : data.type === GIPHY_CONTENT_TYPES.STICKER ? 'Sticker'
+                  : ''
+      );
 
       setChatPreview(chatId, {
         id: data.id,
@@ -1640,6 +1756,8 @@ export default function FriendChatScreen({ route, navigation }) {
         if (type === 'image') msgDesc = 'Sent an image';
         if (type === 'video') msgDesc = 'Sent a video';
         if (type === 'audio') msgDesc = 'Sent a voicenote';
+        if (type === GIPHY_CONTENT_TYPES.GIF) msgDesc = 'Sent a GIF';
+        if (type === GIPHY_CONTENT_TYPES.STICKER) msgDesc = 'Sent a sticker';
         sendMessageNotification(
           recipientId,
           me?.name ?? 'Someone',
@@ -1653,22 +1771,14 @@ export default function FriendChatScreen({ route, navigation }) {
 
   sendRef.current = send;
 
-  const handlePressShare = async (item) => {
-    if (!item.post_user_id) return;
-
-    try {
-      const { data } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', item.post_user_id)
-        .single();
-
-      if (data) {
-        navigation?.navigate('UserProfile', { userId: data.id });
-      }
-    } catch (e) {
-      console.log('Error opening shared post user:', e.message);
-    }
+  const handleGiphySelect = (item) => {
+    setGiphyPickerVisible(false);
+    send({
+      uri: item.mediaUrl,
+      type: item.type,
+      isGiphy: true,
+      analytics: item.analytics,
+    });
   };
 
   const name = otherUser?.name ?? 'Friend';
@@ -1749,7 +1859,7 @@ export default function FriendChatScreen({ route, navigation }) {
       source={activeChatTheme.uri}
       style={s.root}
       imageStyle={{ opacity: isDark ? 0.15 : 0.25 }}
-      resizeMode="cover"
+      contentFit="cover"
     >
       <KeyboardAvoidingView
         style={s.keyboardAvoiding}
@@ -1771,13 +1881,14 @@ export default function FriendChatScreen({ route, navigation }) {
             {photoUrl ? (
               <Image
                 source={{ uri: photoUrl }}
-                style={StyleSheet.absoluteFillObject}
+                style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
                 borderRadius={21}
+                onError={(e) => console.warn('[FriendChat header avatar] load failed:', e?.error ?? e)}
               />
             ) : (
               <Image
                 source={{ uri: getPlaceholderUrl(name) }}
-                style={StyleSheet.absoluteFillObject}
+                style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
                 borderRadius={21}
               />
             )}
@@ -1898,8 +2009,7 @@ export default function FriendChatScreen({ route, navigation }) {
               item={item}
               myId={myUid}
               messages={messages}
-              onPressShare={handlePressShare}
-              onPressMedia={(uri, isVideo) => setViewMedia({ uri, isVideo })}
+              onPressMedia={(uri, isVideo, isGiphy = false) => setViewMedia({ uri, isVideo, isGiphy })}
               onReply={setReplyingTo}
               onScrollToMessage={scrollToMessage}
               isHighlighted={item.id === highlightedMessageId}
@@ -1916,7 +2026,12 @@ export default function FriendChatScreen({ route, navigation }) {
                       setMessages(prev => prev.filter(m => m.id !== item.id));
                       setText(item.text || '');
                       if (item.media_url && item.type !== 'text') {
-                        setSelectedMedia({ uri: item.media_url, type: item.type, waveform: item.waveform });
+                        setSelectedMedia({
+                          uri: item.media_url,
+                          type: item.type,
+                          waveform: item.waveform,
+                          isGiphy: item.type === GIPHY_CONTENT_TYPES.GIF || item.type === GIPHY_CONTENT_TYPES.STICKER,
+                        });
                       }
                       // Auto-send after a tick so the text state updates
                       setTimeout(() => send(), 100);
@@ -2117,8 +2232,25 @@ export default function FriendChatScreen({ route, navigation }) {
           )}
           {selectedMedia && selectedMedia.type !== 'audio' && (
             <View style={s.previewContainer}>
-              <Image source={{ uri: selectedMedia.uri }} style={s.previewImage} />
-              {(selectedMedia.type === 'video' || selectedMedia.uri.toLowerCase().includes('.mp4') || selectedMedia.uri.toLowerCase().includes('.mov')) && (
+              {selectedMedia.type === 'video' ? (
+                <ChatVideo
+                  uri={selectedMedia.uri}
+                  style={s.previewImage}
+                  contentFit="cover"
+                  nativeControls={false}
+                  autoplay={false}
+                />
+              ) : selectedMedia.isGiphy ? (
+                <ExpoImage
+                  source={{ uri: selectedMedia.uri }}
+                  style={s.previewImage}
+                  contentFit="contain"
+                  cachePolicy="none"
+                />
+              ) : (
+                <Image source={{ uri: selectedMedia.uri }} style={s.previewImage} />
+              )}
+              {selectedMedia.type === 'video' && (
                 <View style={s.previewVideoOverlay}>
                   <Ionicons name="play" size={24} color="#fff" />
                 </View>
@@ -2294,50 +2426,68 @@ export default function FriendChatScreen({ route, navigation }) {
             <Ionicons name="close" size={28} color="#fff" />
           </TouchableOpacity>
           {viewMedia?.isVideo ? (
-            <Video
-              source={{ uri: viewMedia.uri }}
+            <ChatVideo
+              uri={viewMedia.uri}
               style={s.modalMedia}
-              resizeMode="contain"
-              useNativeControls
-              shouldPlay
+              contentFit="contain"
+              autoplay
             />
+          ) : viewMedia?.isGiphy ? (
+            <ExpoImage source={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" cachePolicy="none" />
           ) : (
-            <Image source={{ uri: viewMedia?.uri }} style={s.modalMedia} resizeMode="contain" />
+            <Image source={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" />
           )}
         </View>
       </Modal>
-      {/* Attachment Sheet */}
-      <Modal visible={attachmentSheetVisible} transparent animationType="slide" onRequestClose={() => setAttachmentSheetVisible(false)}>
-        <TouchableOpacity style={s.attachmentOverlay} activeOpacity={1} onPress={() => setAttachmentSheetVisible(false)}>
-          <View style={s.attachmentSheet} onStartShouldSetResponder={() => true}>
-            <View style={s.attachmentHandle} />
-            <Text style={s.attachmentTitle}>Share</Text>
-            
-            <View style={s.attachmentOptions}>
-              <TouchableOpacity style={s.attachmentOption} onPress={() => { setAttachmentSheetVisible(false); handlePickMedia(); }}>
-                <View style={[s.attachmentIconBg, { backgroundColor: '#3b82f620' }]}>
-                  <Ionicons name="image" size={24} color="#3b82f6" />
-                </View>
-                <Text style={s.attachmentOptionText}>Media</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={s.attachmentOption} onPress={() => { setAttachmentSheetVisible(false); navigation.navigate('Activity', { chatId, otherUserId: otherUser?.id, otherUserName: otherUser?.name || 'Friend' }); }}>
-                <View style={[s.attachmentIconBg, { backgroundColor: colors.ember + '20' }]}>
-                  <Ionicons name="game-controller" size={24} color={colors.ember} />
-                </View>
-                <Text style={s.attachmentOptionText}>Activities</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={s.attachmentOption} onPress={() => { setAttachmentSheetVisible(false); /* Share profile later */ }}>
-                <View style={[s.attachmentIconBg, { backgroundColor: colors.gold + '20' }]}>
-                  <Ionicons name="person" size={24} color={colors.gold} />
-                </View>
-                <Text style={s.attachmentOptionText}>Profile</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      <AttachmentSheet
+        visible={attachmentSheetVisible}
+        onClose={() => setAttachmentSheetVisible(false)}
+        title="Share"
+        options={[
+          {
+            key: 'media',
+            label: 'Media',
+            icon: 'image',
+            iconColor: '#3b82f6',
+            bgColor: '#3b82f620',
+            onPress: handlePickMedia,
+          },
+          {
+            key: 'giphy',
+            label: 'GIFs',
+            icon: 'happy-outline',
+            iconColor: '#7c3aed',
+            bgColor: '#7c3aed20',
+            onPress: openGiphyPicker,
+          },
+          {
+            key: 'activities',
+            label: 'Activities',
+            icon: 'game-controller',
+            iconColor: colors.ember,
+            bgColor: colors.ember + '20',
+            onPress: () => navigation.navigate('Activity', {
+              chatId,
+              otherUserId: otherUser?.id,
+              otherUserName: otherUser?.name || 'Friend',
+            }),
+          },
+          {
+            key: 'profile',
+            label: 'Profile',
+            icon: 'person',
+            iconColor: colors.gold,
+            bgColor: colors.gold + '20',
+            onPress: () => {},
+          },
+        ]}
+      />
+      <GiphyPicker
+        visible={giphyPickerVisible}
+        onClose={() => setGiphyPickerVisible(false)}
+        onSelect={handleGiphySelect}
+        customerId={myUid}
+      />
 
       {/* Chat Options Sheet */}
       <Modal visible={optionsSheetVisible} transparent animationType="slide" onRequestClose={closeOptionsSheet}>
@@ -2614,6 +2764,39 @@ const getStyles = (colors, shadow, isDark) =>
     shareHeaderTextMe: {
       color: colors.white,
     },
+    sharePostCard: {
+      marginTop: 4,
+      gap: 8,
+    },
+    sharePostAuthorRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    sharePostAvatar: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      overflow: 'hidden',
+      backgroundColor: colors.fog,
+    },
+    sharePostAuthor: {
+      flex: 1,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.ink,
+    },
+    sharePostCaption: {
+      fontSize: 15,
+      lineHeight: 21,
+      color: colors.graphite,
+    },
+    sharePostImage: {
+      width: '100%',
+      height: 168,
+      borderRadius: 12,
+      backgroundColor: colors.fog,
+    },
 
     emptyChat: {
       alignItems: 'center',
@@ -2676,15 +2859,18 @@ const getStyles = (colors, shadow, isDark) =>
     previewContainer: {
       marginHorizontal: 16,
       marginTop: 10,
-      width: 60,
-      height: 60,
-      borderRadius: 8,
+      marginBottom: 6,
+      width: W * 0.35,
+      height: W * 0.35,
+      borderRadius: 12,
       overflow: 'hidden',
       alignSelf: 'flex-start',
+      backgroundColor: colors.fog,
     },
     previewImage: {
-      width: '100%',
-      height: '100%',
+      width: W * 0.35,
+      height: W * 0.35,
+      resizeMode: 'cover',
     },
     previewVideoOverlay: {
       ...StyleSheet.absoluteFillObject,
@@ -2822,11 +3008,22 @@ const getStyles = (colors, shadow, isDark) =>
       paddingVertical: 4,
       paddingHorizontal: 4,
     },
+    giphyBubble: {
+      backgroundColor: 'transparent',
+      padding: 0,
+    },
     mediaContent: {
+      // Remote images do not have intrinsic layout dimensions in React Native.
+      // Give the chat bubble a concrete frame; contentFit="contain" preserves
+      // the original image without stretching or cropping it.
       width: W * 0.65,
       height: W * 0.65,
       borderRadius: 16,
       backgroundColor: colors.fog,
+    },
+    giphyMediaContent: {
+      width: W * 0.62,
+      height: W * 0.5,
     },
     modalBg: {
       flex: 1,

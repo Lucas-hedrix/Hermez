@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+
+    <!-- viewport-fit=cover lets the PWA draw under the iOS notch and
+         the Android gesture pill, so we can paint edge-to-edge and
+         manage safe-area insets ourselves. user-scalable=no keeps the
+         pinch-zoom gesture from breaking the native feel. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover, user-scalable=no"
+    />
+
+    <meta name="theme-color" content="#1A8FFD" />
+    <meta name="theme-color" content="#0E1420" media="(prefers-color-scheme: dark)" />
+
+    <!-- "yes" makes Chrome Android (and the home-screen launch) treat
+         the page as a real app, hiding the address bar. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- iOS Safari: needed for "Add to Home Screen" fullscreen mode.
+         black-translucent paints the status bar transparent over the
+         app's content, so our background colour reaches the top of
+         the screen instead of being capped by a white bar. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Cupid" />
+
+    <!-- iOS home-screen icon. Without this, iOS falls back to a
+         screenshot of the page which looks terrible. -->
+    <link rel="apple-touch-icon" href="./assets/icon.png" />
+
+    <!-- Splash-screen background colour before the JS bundle paints.
+         Matches the manifest so there's no white flash. -->
+    <meta name="background-color" content="#FAFAF9" />
+
+    <!-- Prevents the tap highlight flash on Chrome (and the long-press
+         text-selection callout on iOS Safari). Native apps don't show
+         this — neither should we. -->
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        overscroll-behavior: none;
+      }
+    </style>
+
+    <link rel="manifest" href="./manifest.json" />
+    <title>%WEB_TITLE%</title>
+
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* 100dvh = "dynamic viewport height", shrinks when the iOS URL
+         bar / Android bottom bar shows/hides. Without this the page
+         scrolls under the chrome on first load. */
+      html, body {
+        height: 100%;
+        height: 100dvh;
+      }
+      /* Disable body scrolling if you are using <ScrollView>.
+         NOTE: don't `position: fixed` the body — on iOS Safari that
+         breaks the auto-scroll-into-view behaviour that brings a
+         focused <input> above the soft keyboard. Without that, the
+         Create-Account button on the auth forms can end up hidden
+         behind the keyboard with no way to scroll to it. */
+      body {
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      /* Make the root element full-height. The safe-area padding
+         ensures the iOS notch / home indicator never paints a
+         white gutter before React Native mounts its SafeAreaView. */
+      #root {
+        display: flex;
+        height: 100%;
+        height: 100dvh;
+        flex: 1;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+                 env(safe-area-inset-bottom) env(safe-area-inset-left);
+        box-sizing: border-box;
+      }
+    </style>
+    <style id="expo-icon-fonts">
+      @font-face {
+        font-family: 'Ionicons';
+        src: url('./fonts/Ionicons.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: 'MaterialIcons';
+        src: url('./fonts/MaterialIcons.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: 'MaterialCommunityIcons';
+        src: url('https://cdn.jsdelivr.net/npm/@expo/vector-icons@14.0.0/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>

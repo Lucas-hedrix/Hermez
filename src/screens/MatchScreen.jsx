@@ -1,8 +1,8 @@
+import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Animated, Dimensions, Image
-} from 'react-native';
+  Animated, Dimensions} from 'react-native';
 import { radius } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { supabase } from '../supabase/client';
@@ -81,7 +81,7 @@ export default function MatchScreen({ route, navigation }) {
         <Animated.View style={[s.avatarPair, { transform: [{ scale }] }]}>
           <View style={[s.avatarWrap, s.avatarLeft]}>
             <View style={[s.avatar, { backgroundColor: colors.fog, overflow: 'hidden' }]}>
-              {myPhoto ? <Image source={{ uri: myPhoto }} style={StyleSheet.absoluteFillObject} /> : <Image source={{ uri: getPlaceholderUrl(myName) }} style={StyleSheet.absoluteFillObject} />}
+              {myPhoto ? <Image source={{ uri: myPhoto }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } /> : <Image source={{ uri: getPlaceholderUrl(myName) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />}
             </View>
             <View style={s.avatarRing} />
           </View>
@@ -92,7 +92,7 @@ export default function MatchScreen({ route, navigation }) {
 
           <View style={[s.avatarWrap, s.avatarRight]}>
             <View style={[s.avatar, { backgroundColor: colors.fog, overflow: 'hidden' }]}>
-              {otherUser.photo_urls?.[0] ? <Image source={{ uri: otherUser.photo_urls[0] }} style={StyleSheet.absoluteFillObject} /> : <Image source={{ uri: getPlaceholderUrl(otherUser.name) }} style={StyleSheet.absoluteFillObject} />}
+              {otherUser.photo_urls?.[0] ? <Image source={{ uri: otherUser.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } /> : <Image source={{ uri: getPlaceholderUrl(otherUser.name) }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />}
             </View>
             <View style={s.avatarRing} />
           </View>

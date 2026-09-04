@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, Image, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity, Animated, Easing } from 'react-native';
+import { Image } from 'expo-image';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { radius, fonts } from '../theme';
@@ -72,7 +73,7 @@ export default function WelcomeScreen({ navigation }) {
               StyleSheet.absoluteFill,
               { opacity: opacities[index], transform: [{ scale: scales[index] }] }
             ]}
-            resizeMode="cover"
+            contentFit="cover"
           />
         ))}
       </View>

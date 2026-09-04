@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Text, StyleSheet, Animated, Easing, View } from 'react-native';
+import { Text, StyleSheet, Animated, Easing, View, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons } from '@expo/vector-icons';
 import { fonts } from '../theme';
+import { useOtaUpdate } from '../context/OtaUpdateContext';
 
 export default function SplashScreen({ onFinish, sessionCheckDone }) {
   const containerOpacityAnim = useRef(new Animated.Value(1)).current;
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const { checkComplete } = useOtaUpdate();
 
   // Animations
   const boltScaleAnim = useRef(new Animated.Value(1)).current;
@@ -66,21 +68,21 @@ export default function SplashScreen({ onFinish, sessionCheckDone }) {
   }, []);
 
   useEffect(() => {
-    if (sessionCheckDone && !isFadingOut) {
-      setIsFadingOut(true);
-      // Let the beautiful splash animations play for a short bit
-      setTimeout(() => {
-        Animated.timing(containerOpacityAnim, {
-          toValue: 0,
-          duration: 600,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }).start(() => {
-          onFinish();
-        });
-      }, 6000); 
-    }
-  }, [sessionCheckDone, isFadingOut]);
+    if (!sessionCheckDone || !checkComplete || isFadingOut) return;
+
+    setIsFadingOut(true);
+    const splashDelay = Platform.OS === 'web' ? 1200 : 4000;
+    setTimeout(() => {
+      Animated.timing(containerOpacityAnim, {
+        toValue: 0,
+        duration: 600,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }).start(() => {
+        onFinish();
+      });
+    }, splashDelay);
+  }, [sessionCheckDone, checkComplete, isFadingOut, containerOpacityAnim, onFinish]);
 
   const renderRipple = (anim) => {
     const scale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 2.5] });
@@ -95,7 +97,7 @@ export default function SplashScreen({ onFinish, sessionCheckDone }) {
         { opacity: containerOpacityAnim },
         StyleSheet.absoluteFill
       ]}
-      pointerEvents={isFadingOut ? "none" : "auto"}
+      pointerEvents={Platform.OS === 'web' ? "none" : (isFadingOut ? "none" : "auto")}
     >
       {/* Ambient background glow mapped from radial gradient */}
       <LinearGradient

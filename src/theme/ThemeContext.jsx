@@ -1,10 +1,12 @@
 import { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { Appearance, Image } from 'react-native';
+import { Appearance} from 'react-native';
+import { Image } from 'expo-image';
 import { Asset } from 'expo-asset';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { lightColors, darkColors, shadow as baseShadow, accentPalettes, chatFonts, chatThemes } from './index';
 
 const DEFAULT_CHAT_THEME = 'theme-2';
+const CUSTOM_CHAT_THEMES_KEY = '@cupid_chat_custom_themes';
 
 const ThemeContext = createContext();
 
@@ -30,6 +32,7 @@ export function ThemeProvider({ children }) {
   const [accentColor, setAccentColor] = useState('blue');
   const [chatFont, setChatFont] = useState('system');
   const [chatTheme, setChatTheme] = useState(DEFAULT_CHAT_THEME);
+  const [customChatThemes, setCustomChatThemes] = useState([]);
 
   useEffect(() => {
     // Load saved theme, accent color, or use system preference
@@ -38,7 +41,8 @@ export function ThemeProvider({ children }) {
       AsyncStorage.getItem('@cupid_accent'),
       AsyncStorage.getItem('@cupid_chat_font'),
       AsyncStorage.getItem('@cupid_chat_theme'),
-    ]).then(([savedTheme, savedAccent, savedFont, savedChatTheme]) => {
+      AsyncStorage.getItem(CUSTOM_CHAT_THEMES_KEY),
+    ]).then(([savedTheme, savedAccent, savedFont, savedChatTheme, savedCustomThemes]) => {
       if (savedTheme) {
         setIsDark(savedTheme === 'dark');
       } else {
@@ -54,9 +58,23 @@ export function ThemeProvider({ children }) {
         setChatFont(savedFont);
       }
 
+      if (savedCustomThemes) {
+        try {
+          const parsed = JSON.parse(savedCustomThemes);
+          if (Array.isArray(parsed)) {
+            const filtered = parsed.filter((uri) => typeof uri === 'string' && uri.trim().length > 0);
+            setCustomChatThemes(filtered);
+            if (savedChatTheme?.startsWith('custom:') && !filtered.includes(savedChatTheme.slice('custom:'.length))) {
+              prefetchCustomTheme(savedChatTheme.slice('custom:'.length));
+            }
+          }
+        } catch (e) {
+          console.log('[ThemeContext] custom themes parse error:', e.message);
+        }
+      }
+
       if (savedChatTheme) {
         setChatTheme(savedChatTheme);
-        // Prefetch the stored custom theme immediately to avoid black flash
         if (savedChatTheme.startsWith('custom:')) {
           prefetchCustomTheme(savedChatTheme.slice('custom:'.length));
         }
@@ -96,6 +114,24 @@ export function ThemeProvider({ children }) {
     }
   };
 
+  const addCustomChatTheme = async (uri) => {
+    if (!uri || typeof uri !== 'string') return;
+
+    const trimmed = uri.trim();
+    if (!trimmed) return;
+
+    setCustomChatThemes((current) => {
+      const next = [trimmed, ...current.filter((item) => item !== trimmed)];
+      AsyncStorage.setItem(CUSTOM_CHAT_THEMES_KEY, JSON.stringify(next));
+      return next;
+    });
+
+    const themeKey = `custom:${trimmed}`;
+    setChatTheme(themeKey);
+    AsyncStorage.setItem('@cupid_chat_theme', themeKey);
+    prefetchCustomTheme(trimmed);
+  };
+
   const changeChatTheme = (themeKey) => {
     // Allow built-in themes or custom themes (prefixed with "custom:")
     if (chatThemes[themeKey] || themeKey.startsWith('custom:')) {
@@ -121,10 +157,11 @@ export function ThemeProvider({ children }) {
   const activeChatTheme = useMemo(() => {
     if (chatTheme && chatTheme.startsWith('custom:')) {
       const uri = chatTheme.slice('custom:'.length);
-      // For custom themes, we use the local file URI directly
-      return { type: 'custom', uri };
+      // For custom themes, return a source object compatible with Image/ImageBackground
+      // ImageBackground expects { uri: '...' } for remote/local file URIs
+      return { uri };
     }
-    // For built-in themes, return the require() result which is bundled
+    // For built-in themes, return the theme object which has the require() result in .uri
     return chatThemes[chatTheme] || chatThemes[DEFAULT_CHAT_THEME];
   }, [chatTheme]);
 
@@ -146,7 +183,21 @@ export function ThemeProvider({ children }) {
   }), [isDark, colors.ember]);
 
   return (
-    <ThemeContext.Provider value={{ isDark, toggleTheme, colors, shadow, accentColor, changeAccentColor, chatFont, changeChatFont, chatTheme, activeChatTheme, changeChatTheme }}>
+    <ThemeContext.Provider value={{
+      isDark,
+      toggleTheme,
+      colors,
+      shadow,
+      accentColor,
+      changeAccentColor,
+      chatFont,
+      changeChatFont,
+      chatTheme,
+      activeChatTheme,
+      changeChatTheme,
+      customChatThemes,
+      addCustomChatTheme,
+    }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -156,7 +207,21 @@ export function useTheme() {
   const context = useContext(ThemeContext);
   if (!context) {
     // Fallback if not wrapped in provider (should not happen if App is wrapped)
-    return { isDark: false, toggleTheme: () => {}, colors: lightColors, shadow: baseShadow, accentColor: 'pink', changeAccentColor: () => {}, chatFont: 'system', changeChatFont: () => {} };
+    return {
+      isDark: false,
+      toggleTheme: () => {},
+      colors: lightColors,
+      shadow: baseShadow,
+      accentColor: 'pink',
+      changeAccentColor: () => {},
+      chatFont: 'system',
+      changeChatFont: () => {},
+      chatTheme: DEFAULT_CHAT_THEME,
+      activeChatTheme: chatThemes[DEFAULT_CHAT_THEME],
+      changeChatTheme: () => {},
+      customChatThemes: [],
+      addCustomChatTheme: () => {},
+    };
   }
   return context;
 }

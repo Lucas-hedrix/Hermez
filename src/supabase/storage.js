@@ -3,7 +3,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { supabase } from './client';
 
 const BUCKET = 'photos';
@@ -71,40 +71,71 @@ async function ensureCameraPermission() {
   return true;
 }
 
-// ── Upload a local URI to Supabase Storage ────────────────────────────────────
-async function uploadUri(userId, asset) {
-  const converted = await maybeConvertToWebp(asset);
-  const sourceUri = converted?.uri || asset.uri;
-
-  // Determine file extension - use mimeType as fallback for recorded audio
-  let ext;
-  if (converted) {
-    ext = 'webp';
-  } else {
-    const uriExt = asset.uri.split('.').pop()?.split('?')[0]?.toLowerCase();
-    const mime = (asset.mimeType || '').toLowerCase();
-
-    if (uriExt && ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'm4v', 'webm', 'avi', 'm4a', 'mp3', 'wav', 'aac', 'caf'].includes(uriExt)) {
-      ext = uriExt;
-    } else if (mime.startsWith('audio/')) {
-      ext = 'm4a'; // Default for recorded audio (expo-av uses m4a)
-    } else if (mime.startsWith('video/')) {
-      ext = 'mp4';
-    } else {
-      ext = 'jpg'; // Default for images
-    }
+// ── Read local file bytes (handles content:// and file:// URIs) ───────────────
+async function readFileBody(uri) {
+  try {
+    const base64 = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
+    if (base64) return decode(base64);
+  } catch (e) {
+    console.warn('readAsStringAsync failed, trying fetch:', e?.message);
   }
+
+  const response = await fetch(uri);
+  if (!response.ok) {
+    throw new Error(`Failed to read file (${response.status})`);
+  }
+  return response.arrayBuffer();
+}
+
+function getAssetExtension(asset, converted) {
+  if (converted) return 'webp';
+
+  const uriExt = asset.uri.split('.').pop()?.split('?')[0]?.toLowerCase();
+  const mime = (asset.mimeType || '').toLowerCase();
+  const knownExts = ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'm4v', 'webm', 'avi', 'm4a', 'mp3', 'wav', 'aac', 'caf'];
+
+  if (uriExt && knownExts.includes(uriExt)) {
+    return uriExt === 'jpeg' ? 'jpg' : uriExt;
+  }
+  if (mime.startsWith('video/')) {
+    return mime.includes('quicktime') ? 'mov' : 'mp4';
+  }
+  if (mime.startsWith('audio/')) return 'm4a';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (asset.type === 'video') return 'mp4';
+  return 'jpg';
+}
+
+function normalizeMediaAsset(asset) {
+  if (!asset?.uri) return null;
+
+  const mime = (asset.mimeType || '').toLowerCase();
+  const isVideo = asset.type === 'video' || mime.startsWith('video/');
+
+  return {
+    uri: asset.uri,
+    type: isVideo ? 'video' : 'image',
+    mimeType: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+    width: asset.width,
+    height: asset.height,
+  };
+}
+
+// ── Upload a local URI to Supabase Storage ────────────────────────────────────
+async function uploadUri(userId, asset, { skipWebp = false } = {}) {
+  const converted = skipWebp ? null : await maybeConvertToWebp(asset);
+  const sourceUri = converted?.uri || asset.uri;
+  const ext = getAssetExtension(asset, converted);
   const filePath = `${userId}/${Date.now()}.${ext}`;
 
   try {
-    const base64 = await readAsStringAsync(sourceUri, { encoding: EncodingType.Base64 });
+    const fileBody = await readFileBody(sourceUri);
 
-    if (!base64) {
+    if (!fileBody || fileBody.byteLength === 0) {
       Alert.alert('Upload failed', 'Image file was empty.');
       return null;
     }
-
-    const fileBody = decode(base64);
 
     const contentType =
       converted?.mimeType ||
@@ -145,14 +176,14 @@ async function uploadUri(userId, asset) {
 }
 
 // ── Pick from camera roll ─────────────────────────────────────────────────────
-async function fromLibrary(userId) {
+async function fromLibrary(userId, { freeAspect = false } = {}) {
   if (!(await ensureMediaPermission())) return null;
 
   const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.All,
-    allowsEditing: true,
-    aspect: [3, 4],
-    quality: 0.8,
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: !freeAspect,
+    ...(freeAspect ? {} : { aspect: [3, 4] }),
+    quality: 0.85,
   });
 
   if (result.canceled) return null;
@@ -162,19 +193,18 @@ async function fromLibrary(userId) {
     return null;
   }
 
-  if (result.canceled) return null;
-  return uploadUri(userId, result.assets[0]);
+  return uploadUri(userId, asset);
 }
 
 // ── Snap with camera ──────────────────────────────────────────────────────────
-async function fromCamera(userId) {
+async function fromCamera(userId, { freeAspect = false } = {}) {
   if (!(await ensureCameraPermission())) return null;
 
   const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.All,
-    allowsEditing: true,
-    aspect: [3, 4],
-    quality: 0.8,
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: !freeAspect,
+    ...(freeAspect ? {} : { aspect: [3, 4] }),
+    quality: 0.85,
   });
 
   if (result.canceled) return null;
@@ -184,8 +214,7 @@ async function fromCamera(userId) {
     return null;
   }
 
-  if (result.canceled) return null;
-  return uploadUri(userId, result.assets[0]);
+  return uploadUri(userId, asset);
 }
 
 // ── Pick only (local URI) — use for previews before upload ───────────────────
@@ -245,13 +274,77 @@ export function pickPhotoAsset() {
   });
 }
 
+async function pickAssetByKind(kind) {
+  if (!(await ensureMediaPermission())) return null;
+
+  let mediaTypes = ImagePicker.MediaTypeOptions.All;
+  if (kind === 'photo') mediaTypes = ImagePicker.MediaTypeOptions.Images;
+  if (kind === 'video') mediaTypes = ImagePicker.MediaTypeOptions.Videos;
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes,
+    allowsEditing: kind === 'photo',
+    ...(kind === 'photo' ? { aspect: [4, 3], quality: 0.85 } : { quality: 0.85 }),
+  });
+
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  if (asset.fileSize && asset.fileSize > 15 * 1024 * 1024) {
+    Alert.alert('File too large', 'Please select a file under 15MB.');
+    return null;
+  }
+  return asset;
+}
+
+export function pickImageAsset() {
+  return pickAssetByKind('photo');
+}
+
+export function pickVideoAsset() {
+  return pickAssetByKind('video');
+}
+
+export function pickAudioAsset() {
+  return pickAssetByKind('audio');
+}
+
+export function pickFileAsset() {
+  return pickAssetByKind('file');
+}
+
+export async function pickChatMediaAsset() {
+  if (!(await ensureMediaPermission())) return null;
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.All,
+    allowsEditing: false,
+    quality: 0.85,
+    videoMaxDuration: 60,
+    exif: false,
+  });
+
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  if (asset.fileSize && asset.fileSize > 15 * 1024 * 1024) {
+    Alert.alert('File too large', 'Please select a file under 15MB.');
+    return null;
+  }
+  return normalizeMediaAsset(asset);
+}
+
 export function uploadPhotoAsset(userId, asset) {
   if (!asset?.uri) return Promise.resolve(null);
   return uploadUri(userId, asset);
 }
 
+export function uploadChatMediaAsset(userId, asset) {
+  if (!asset?.uri) return Promise.resolve(null);
+  return uploadUri(userId, asset, { skipWebp: true });
+}
+
 // ── Public: pick with camera/library choice (ActionSheet) ────────────────────
-export function pickAndUploadPhoto(userId) {
+export function pickAndUploadPhoto(userId, options = {}) {
+  const { freeAspect = false } = options;
   return new Promise((resolve) => {
     Alert.alert(
       'Add photo',
@@ -259,11 +352,11 @@ export function pickAndUploadPhoto(userId) {
       [
         {
           text: 'Take photo',
-          onPress: () => fromCamera(userId).then(resolve),
+          onPress: () => fromCamera(userId, { freeAspect }).then(resolve),
         },
         {
           text: 'Photo library',
-          onPress: () => fromLibrary(userId).then(resolve),
+          onPress: () => fromLibrary(userId, { freeAspect }).then(resolve),
         },
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
       ]

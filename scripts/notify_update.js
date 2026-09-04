@@ -39,8 +39,8 @@ async function notifyAllUsersOfUpdate() {
     const payload = {
       to: user.push_token,
       sound: 'default',
-      title: 'Hermez Is Cooking ... ',
-      body: "New version Just Dropped, Check it out on our website ",
+      title: 'Stickers and Gifs now Live On Cupid',
+      body: "you can now share your favorite stickers in the chat and comment in Feed section, Keep the Spark Going ✨⚡🔥",
       data: { type: 'system_update' },
     };
 

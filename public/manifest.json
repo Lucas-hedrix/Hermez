@@ -1,0 +1,21 @@
+{
+  "name": "Cupid",
+  "short_name": "Cupid",
+  "description": "Meet people who share your vibe",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui", "browser"],
+  "orientation": "portrait",
+  "theme_color": "#1A8FFD",
+  "background_color": "#FAFAF9",
+  "categories": ["social", "lifestyle"],
+  "icons": [
+    {
+      "src": "./assets/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

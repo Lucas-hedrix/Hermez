@@ -13,7 +13,7 @@
 
 ```bash
 npm install
-npx expo start
+npx expo start --go --offline
 # Scan QR with Expo Go app
 ```
 

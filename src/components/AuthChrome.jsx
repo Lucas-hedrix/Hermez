@@ -91,7 +91,13 @@ function AuthHeroInner({
               paddingBottom: Math.max(insets.bottom, 16) + 8,
             },
           ]}
-          keyboardShouldPersistTaps="handled"
+          // "always" so the Create / Sign In button fires on the first
+          // tap even when the soft keyboard is up. With the default
+          // ("never") iOS Safari's first tap just dismisses the keyboard
+          // and the user has to tap a second time, which feels broken
+          // in PWA mode where there's no visual "tap anywhere to
+          // dismiss" hint.
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
           automaticallyAdjustKeyboardInsets
         >

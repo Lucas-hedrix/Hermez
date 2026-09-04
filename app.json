@@ -9,13 +9,17 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lucas.cupid"
+      "bundleIdentifier": "com.lucas.cupid",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.lucas.cupid",
       "googleServicesFile": "google-services.json"
     },
     "plugins": [
+      "expo-updates",
       "expo-secure-store",
       [
         "expo-notifications",
@@ -25,7 +29,18 @@
           "sounds": []
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/MaterialCommunityIcons.ttf"
+          ]
+        }
+      ],
+      "expo-image",
+      "expo-status-bar",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
@@ -36,7 +51,27 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/ee423df6-b8d5-452e-9c0e-40bce64326d6"
+      "url": "https://u.expo.dev/ee423df6-b8d5-452e-9c0e-40bce64326d6",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 30000
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/icon.png",
+      "name": "Cupid",
+      "shortName": "Cupid",
+      "description": "Meet people who share your vibe",
+      "themeColor": "#1A8FFD",
+      "backgroundColor": "#FAFAF9",
+      "display": "fullscreen",
+      "displayOverride": [
+        "fullscreen",
+        "standalone",
+        "minimal-ui",
+        "browser"
+      ],
+      "orientation": "portrait"
     }
   }
 }

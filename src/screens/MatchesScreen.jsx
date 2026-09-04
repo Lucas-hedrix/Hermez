@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
@@ -5,13 +6,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Image,
   TextInput,
   Animated,
   Platform,
   FlatList,
-  Modal,
-} from 'react-native';
+  Modal} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +20,7 @@ import { supabase } from '../supabase/client';
 import AnimatedSparkles from '../components/AnimatedSparkles';
 import SparksInbox from '../components/SparksInbox';
 import { getPlaceholderUrl } from '../utils/placeholders';
+import { SkeletonFeed, SkeletonChatRow } from '../components/Skeleton';
 import { VIBES, getVibeActivityLabel, getVibeColor, getVibeIcon, isVibeExpired } from '../constants/vibes';
 import { repairSparkFriendships } from '../services/sparks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -95,12 +95,12 @@ function NewMatchBubble({ item, onPress }) {
           {item.photoUrl ? (
             <Image
               source={{ uri: item.photoUrl }}
-              style={StyleSheet.absoluteFillObject}
+              style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
             />
           ) : (
             <Image
               source={{ uri: getPlaceholderUrl(item.name) }}
-              style={StyleSheet.absoluteFillObject}
+              style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
             />
           )}
         </View>
@@ -136,6 +136,7 @@ function ConversationRow({ item, onPress, index = 0 }) {
   const hasUnread = item.unread > 0 && !item.lastMsgIsMine;
   const isDeleted = item.isDeleted === true;
   const lastMsgIsAudio = item.isAudio === true;
+  const isAudioUnread = lastMsgIsAudio && !item.lastMsgRead;
 
   return (
     <Animated.View style={{ opacity: fade, transform: [{ translateX: fade.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }}>
@@ -149,13 +150,13 @@ function ConversationRow({ item, onPress, index = 0 }) {
           {item.photoUrl ? (
             <Image
               source={{ uri: item.photoUrl }}
-              style={StyleSheet.absoluteFillObject}
+              style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
               borderRadius={28}
             />
           ) : (
             <Image
               source={{ uri: getPlaceholderUrl(item.name) }}
-              style={StyleSheet.absoluteFillObject}
+              style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
               borderRadius={28}
             />
           )}
@@ -189,14 +190,14 @@ function ConversationRow({ item, onPress, index = 0 }) {
               <Ionicons name="trash-outline" size={12} color={colors.ash} />
             )}
             {lastMsgIsAudio && !isDeleted && (
-              <Ionicons name="mic" size={12} color={colors.ember} />
+              <Ionicons name="mic" size={12} color={isAudioUnread ? colors.ember : colors.ash} />
             )}
             <Text
               style={[
                 s.convPreview,
                 hasUnread && s.convPreviewBold,
                 isDeleted && { color: colors.ash, fontStyle: 'italic' },
-                lastMsgIsAudio && !isDeleted && { color: colors.ember }
+                lastMsgIsAudio && !isDeleted && { color: isAudioUnread ? colors.ember : colors.ash }
               ]}
               numberOfLines={1}
             >
@@ -742,8 +743,8 @@ export default function MatchesScreen({
               renderItem={({ item }) => (
                 <NewMatchBubble item={{ ...item.otherUser, time: timeAgo(item.created_at), photoUrl: item.otherUser.photo_urls?.[0] }} onPress={() => openProfile(item)} />
               )}
-              numColumns={4}
-              columnWrapperStyle={{ gap: 12, paddingHorizontal: 16 }}
+              numColumns={3}
+              columnWrapperStyle={{ justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 18 }}
               contentContainerStyle={{ paddingBottom: 100, paddingTop: 16 }}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
@@ -759,10 +760,7 @@ export default function MatchesScreen({
           ) : (
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 110 }}>
         {loading ? (
-          <View style={s.loadingWrap}>
-            <AnimatedSparkles size={40} color={colors.ember} />
-            <Text style={{ color: colors.stone, marginTop: 10 }}>Loading conversations…</Text>
-          </View>
+          <SkeletonFeed itemCount={4} ItemComponent={SkeletonChatRow} style={{ paddingTop: 20 }} />
         ) : filteredFriends.length === 0 ? (
           <View style={s.emptyHint}>
             <Ionicons
@@ -1010,8 +1008,9 @@ const getStyles = (colors, shadow, isDark) =>
       gap: 12,
     },
     newMatchItem: {
-      width: 76,
+      width: '33.33%',
       alignItems: 'center',
+      paddingHorizontal: 8,
     },
     newMatchRing: {
       width: 66,
