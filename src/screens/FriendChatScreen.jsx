@@ -620,7 +620,7 @@ function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onRepl
               accessibilityLabel={item.type === GIPHY_CONTENT_TYPES.STICKER ? 'GIPHY sticker' : 'GIPHY GIF'}
             />
           ) : (
-            <Image source={{ uri: item.media_url }} style={s.mediaContent} contentFit="contain" />
+            <ExpoImagesource={{ uri: item.media_url }} style={s.mediaContent} contentFit="contain" />
           )}
           {item.text ? <Text style={[s.bubbleText, isMe && s.bubbleTextMe, { marginTop: 6, fontFamily }]}>{item.text}</Text> : null}
           {renderMeta()}
@@ -647,9 +647,9 @@ function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onRepl
               <View style={s.sharePostAuthorRow}>
                 <View style={s.sharePostAvatar}>
                   {shared.author?.photo_urls?.[0] ? (
-                    <Image source={{ uri: shared.author.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
+                    <ExpoImagesource={{ uri: shared.author.photo_urls[0] }} style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] } />
                   ) : (
-                    <Image
+                    <ExpoImage
                       source={{ uri: getPlaceholderUrl(shared.author?.name) }}
                       style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
                     />
@@ -669,7 +669,7 @@ function Bubble({ item, messages, myId, onPressMedia, onLongPressMessage, onRepl
                   onPress={() => onPressMedia(shared.image_url, false)}
                   activeOpacity={0.85}
                 >
-                  <Image source={{ uri: shared.image_url }} style={s.sharePostImage} contentFit="cover" />
+                  <ExpoImagesource={{ uri: shared.image_url }} style={s.sharePostImage} contentFit="cover" />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -1879,14 +1879,14 @@ export default function FriendChatScreen({ route, navigation }) {
         >
           <View style={s.headerAv}>
             {photoUrl ? (
-              <Image
+              <ExpoImage
                 source={{ uri: photoUrl }}
                 style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
                 borderRadius={21}
                 onError={(e) => console.warn('[FriendChat header avatar] load failed:', e?.error ?? e)}
               />
             ) : (
-              <Image
+              <ExpoImage
                 source={{ uri: getPlaceholderUrl(name) }}
                 style={[StyleSheet.absoluteFillObject, {width: "100%", height: "100%"}] }
                 borderRadius={21}
@@ -2248,7 +2248,7 @@ export default function FriendChatScreen({ route, navigation }) {
                   cachePolicy="none"
                 />
               ) : (
-                <Image source={{ uri: selectedMedia.uri }} style={s.previewImage} />
+                <ExpoImagesource={{ uri: selectedMedia.uri }} style={s.previewImage} />
               )}
               {selectedMedia.type === 'video' && (
                 <View style={s.previewVideoOverlay}>
@@ -2435,7 +2435,7 @@ export default function FriendChatScreen({ route, navigation }) {
           ) : viewMedia?.isGiphy ? (
             <ExpoImage source={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" cachePolicy="none" />
           ) : (
-            <Image source={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" />
+            <ExpoImagesource={{ uri: viewMedia?.uri }} style={s.modalMedia} contentFit="contain" />
           )}
         </View>
       </Modal>
